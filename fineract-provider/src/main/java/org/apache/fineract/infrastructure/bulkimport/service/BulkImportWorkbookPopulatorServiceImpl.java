@@ -23,11 +23,15 @@ import jakarta.ws.rs.core.Response.ResponseBuilder;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.fineract.accounting.glaccount.data.GLAccountData;
 import org.apache.fineract.accounting.glaccount.service.GLAccountReadPlatformService;
 import org.apache.fineract.infrastructure.bulkimport.constants.TemplatePopulateImportConstants;
 import org.apache.fineract.infrastructure.bulkimport.data.GlobalEntityType;
+import org.apache.fineract.infrastructure.bulkimport.data.LookupMode;
 import org.apache.fineract.infrastructure.bulkimport.populator.CenterSheetPopulator;
 import org.apache.fineract.infrastructure.bulkimport.populator.ChargeSheetPopulator;
 import org.apache.fineract.infrastructure.bulkimport.populator.ClientSheetPopulator;
@@ -65,7 +69,9 @@ import org.apache.fineract.infrastructure.bulkimport.populator.staff.StaffWorkbo
 import org.apache.fineract.infrastructure.bulkimport.populator.users.UserWorkbookPopulator;
 import org.apache.fineract.infrastructure.codes.data.CodeValueData;
 import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
+import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.exception.GeneralPlatformDomainRuleException;
+import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.service.DateUtils;
 import org.apache.fineract.infrastructure.core.service.Page;
 import org.apache.fineract.infrastructure.core.service.SearchParameters;
@@ -117,6 +123,11 @@ import org.springframework.stereotype.Service;
 public class BulkImportWorkbookPopulatorServiceImpl implements BulkImportWorkbookPopulatorService {
 
     private static final Logger LOG = LoggerFactory.getLogger(BulkImportWorkbookPopulatorServiceImpl.class);
+    // Templates whose populators never format a date: they ignore dateFormat or only hand it to POI's
+    // createDateConstraint, which accepts null. Every other template needs it and fails without it.
+    private static final Set<GlobalEntityType> TEMPLATES_WITHOUT_DATE_FORMAT = EnumSet.of(GlobalEntityType.OFFICES, GlobalEntityType.STAFF,
+            GlobalEntityType.USERS, GlobalEntityType.CHART_OF_ACCOUNTS, GlobalEntityType.GL_JOURNAL_ENTRIES,
+            GlobalEntityType.SHARE_ACCOUNTS);
     private final PlatformSecurityContext context;
     private final OfficeReadPlatformService officeReadPlatformService;
     private final StaffReadService staffReadPlatformService;
@@ -175,7 +186,11 @@ public class BulkImportWorkbookPopulatorServiceImpl implements BulkImportWorkboo
     }
 
     @Override
-    public Response getTemplate(String entityType, Long officeId, Long staffId, final String dateFormat) {
+    public Response getTemplate(String entityType, Long officeId, Long staffId, final String dateFormat, final LookupMode lookupMode) {
+        if (StringUtils.isBlank(dateFormat) && requiresDateFormat(entityType)) {
+            throw new PlatformApiDataValidationException(List.of(ApiParameterError.parameterError("error.msg.dateformat.mandatory",
+                    "The parameter dateFormat is mandatory", "dateFormat")));
+        }
         WorkbookPopulator populator = null;
         final Workbook workbook = new HSSFWorkbook();
         if (entityType != null) {
@@ -189,7 +204,7 @@ public class BulkImportWorkbookPopulatorServiceImpl implements BulkImportWorkboo
             } else if (entityType.trim().equalsIgnoreCase(GlobalEntityType.LOANS.toString())) {
                 populator = populateLoanWorkbook(officeId, staffId);
             } else if (entityType.trim().equalsIgnoreCase(GlobalEntityType.LOAN_TRANSACTIONS.toString())) {
-                populator = populateLoanRepaymentWorkbook(officeId);
+                populator = populateLoanRepaymentWorkbook(officeId, lookupMode);
             } else if (entityType.trim().equalsIgnoreCase(GlobalEntityType.GL_JOURNAL_ENTRIES.toString())) {
                 populator = populateJournalEntriesWorkbook(officeId);
             } else if (entityType.trim().equalsIgnoreCase(GlobalEntityType.GUARANTORS.toString())) {
@@ -224,6 +239,11 @@ public class BulkImportWorkbookPopulatorServiceImpl implements BulkImportWorkboo
         } else {
             throw new GeneralPlatformDomainRuleException("error.msg.given.entity.type.null", "Given Entity type is null");
         }
+    }
+
+    private static boolean requiresDateFormat(final String entityType) {
+        return entityType != null
+                && TEMPLATES_WITHOUT_DATE_FORMAT.stream().noneMatch(type -> type.toString().equalsIgnoreCase(entityType.trim()));
     }
 
     private WorkbookPopulator populateClientWorkbook(final String entityType, final Long officeId, final Long staffId) {
@@ -420,20 +440,25 @@ public class BulkImportWorkbookPopulatorServiceImpl implements BulkImportWorkboo
         return groups;
     }
 
-    private WorkbookPopulator populateLoanRepaymentWorkbook(Long officeId) {
+    private WorkbookPopulator populateLoanRepaymentWorkbook(Long officeId, LookupMode lookupMode) {
         this.context.authenticatedUser().validateHasReadPermission(TemplatePopulateImportConstants.OFFICE_ENTITY_TYPE);
         this.context.authenticatedUser().validateHasReadPermission(TemplatePopulateImportConstants.CLIENT_ENTITY_TYPE);
         this.context.authenticatedUser().validateHasReadPermission(TemplatePopulateImportConstants.FUNDS_ENTITY_TYPE);
         this.context.authenticatedUser().validateHasReadPermission(TemplatePopulateImportConstants.PAYMENT_TYPE_ENTITY_TYPE);
         this.context.authenticatedUser().validateHasReadPermission(TemplatePopulateImportConstants.CURRENCY_ENTITY_TYPE);
+        // FINERACT-2668: the Extras (payment types) sheet is small and read back at import, so it is always built. The
+        // clients/offices lookup sheets and the per-loan lookup table are tenant-wide and are NOT read at import (the
+        // handler resolves the loan from the typed account number), so they are omittable — all or nothing:
+        // EXCLUDE = lean (fetch none); otherwise the full template fetches every client/loan (unchanged behaviour).
+        ExtrasSheetPopulator extras = new ExtrasSheetPopulator(fetchFunds(), fetchPaymentTypes(), fetchCurrencies());
+        if (lookupMode == LookupMode.EXCLUDE) {
+            return LoanRepaymentWorkbookPopulator.lean(extras);
+        }
         List<OfficeData> offices = fetchOffices(officeId);
         List<ClientData> clients = fetchClients(officeId);
-        List<FundData> funds = fetchFunds();
-        List<PaymentTypeData> paymentTypes = fetchPaymentTypes();
-        List<CurrencyData> currencies = fetchCurrencies();
         List<LoanAccountData> loans = fetchLoanAccounts(officeId);
-        return new LoanRepaymentWorkbookPopulator(loans, new OfficeSheetPopulator(offices), new ClientSheetPopulator(clients, offices),
-                new ExtrasSheetPopulator(funds, paymentTypes, currencies));
+        return LoanRepaymentWorkbookPopulator.full(loans, new OfficeSheetPopulator(offices), new ClientSheetPopulator(clients, offices),
+                extras);
     }
 
     private List<LoanAccountData> fetchLoanAccounts(final Long officeId) {

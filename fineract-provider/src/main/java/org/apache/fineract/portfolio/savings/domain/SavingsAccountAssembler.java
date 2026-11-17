@@ -339,8 +339,17 @@ public class SavingsAccountAssembler {
         return account;
     }
 
+    public void lockInIdOrder(final Long... savingsIds) {
+        this.savingsAccountRepository.lockInIdOrder(savingsIds);
+    }
+
     public SavingsAccount assembleFrom(final Long savingsId, final boolean backdatedTxnsAllowedTill) {
         SavingsAccount account = this.savingsAccountRepository.findSavingsWithNotFoundDetection(savingsId, backdatedTxnsAllowedTill);
+        return loadTransactionsToSavingsAccount(account, backdatedTxnsAllowedTill);
+    }
+
+    public SavingsAccount assembleFromInUserScope(final Long savingsId, final boolean backdatedTxnsAllowedTill) {
+        SavingsAccount account = this.savingsAccountRepository.findOneInUserScope(savingsId, backdatedTxnsAllowedTill);
         return loadTransactionsToSavingsAccount(account, backdatedTxnsAllowedTill);
     }
 
@@ -357,8 +366,10 @@ public class SavingsAccountAssembler {
                     savingsAccountTransactions = this.savingsAccountRepository.findTransactionsAfterPivotDate(account,
                             interestPostedTillDate.minusDays(relaxingDaysForPivotDate));
 
-                    savingsAccountTransactions.get(0).getSavingsAccount()
-                            .setStartInterestCalculationDate(interestPostedTillDate.minusDays(relaxingDaysForPivotDate));
+                    if (savingsAccountTransactions != null && !savingsAccountTransactions.isEmpty()) {
+                        savingsAccountTransactions.get(0).getSavingsAccount()
+                                .setStartInterestCalculationDate(interestPostedTillDate.minusDays(relaxingDaysForPivotDate));
+                    }
                     List<SavingsAccountTransaction> pivotDateTransaction = this.savingsAccountRepository
                             .findTransactionRunningBalanceBeforePivotDate(account,
                                     interestPostedTillDate.minusDays(relaxingDaysForPivotDate + 1));

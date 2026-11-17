@@ -23,6 +23,7 @@ import org.apache.fineract.infrastructure.core.config.FineractProperties;
 import org.apache.fineract.infrastructure.core.service.ExternalIdFactory;
 import org.apache.fineract.infrastructure.core.service.PaginationHelper;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
+import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.infrastructure.security.service.SqlValidator;
 import org.apache.fineract.infrastructure.security.utils.ColumnValidator;
 import org.apache.fineract.organisation.office.service.OfficeReadPlatformService;
@@ -42,8 +43,8 @@ import org.apache.fineract.portfolio.account.service.AccountTransfersWritePlatfo
 import org.apache.fineract.portfolio.account.service.AccountTransfersWritePlatformServiceImpl;
 import org.apache.fineract.portfolio.account.service.PortfolioAccountReadPlatformService;
 import org.apache.fineract.portfolio.account.service.PortfolioAccountReadPlatformServiceImpl;
-import org.apache.fineract.portfolio.account.service.StandingInstructionHistoryReadPlatformService;
-import org.apache.fineract.portfolio.account.service.StandingInstructionHistoryReadPlatformServiceImpl;
+import org.apache.fineract.portfolio.account.service.StandingInstructionHistoryReadService;
+import org.apache.fineract.portfolio.account.service.StandingInstructionHistoryReadServiceImpl;
 import org.apache.fineract.portfolio.account.service.StandingInstructionReadPlatformService;
 import org.apache.fineract.portfolio.account.service.StandingInstructionReadPlatformServiceImpl;
 import org.apache.fineract.portfolio.account.service.StandingInstructionWritePlatformService;
@@ -54,6 +55,7 @@ import org.apache.fineract.portfolio.loanaccount.domain.LoanAccountDomainService
 import org.apache.fineract.portfolio.loanaccount.service.LoanAssembler;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
 import org.apache.fineract.portfolio.loanaccount.service.adjustment.LoanAdjustmentService;
+import org.apache.fineract.portfolio.paymentdetail.service.PaymentDetailWritePlatformService;
 import org.apache.fineract.portfolio.savings.domain.GSIMRepositoy;
 import org.apache.fineract.portfolio.savings.domain.SavingsAccountAssembler;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountDomainService;
@@ -92,11 +94,13 @@ public class AccountConfiguration {
             LoanAccountDomainService loanAccountDomainService, SavingsAccountWritePlatformService savingsAccountWritePlatformService,
             AccountTransferDetailRepository accountTransferDetailRepository, LoanReadPlatformService loanReadPlatformService,
             GSIMRepositoy gsimRepository, ConfigurationDomainService configurationDomainService, ExternalIdFactory externalIdFactory,
-            FineractProperties fineractProperties, LoanAdjustmentService loanAdjustmentService) {
+            FineractProperties fineractProperties, LoanAdjustmentService loanAdjustmentService,
+            PaymentDetailWritePlatformService paymentDetailWritePlatformService, PlatformSecurityContext context) {
         return new AccountTransfersWritePlatformServiceImpl(accountTransfersDataValidator, accountTransferAssembler,
                 accountTransferRepository, savingsAccountAssembler, savingsAccountDomainService, loanAccountAssembler,
                 loanAccountDomainService, savingsAccountWritePlatformService, accountTransferDetailRepository, loanReadPlatformService,
-                gsimRepository, configurationDomainService, externalIdFactory, fineractProperties, loanAdjustmentService);
+                gsimRepository, configurationDomainService, externalIdFactory, fineractProperties, loanAdjustmentService,
+                paymentDetailWritePlatformService, context);
     }
 
     @Bean
@@ -107,10 +111,10 @@ public class AccountConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(StandingInstructionHistoryReadPlatformService.class)
-    public StandingInstructionHistoryReadPlatformService standingInstructionHistoryReadPlatformService(JdbcTemplate jdbcTemplate,
+    @ConditionalOnMissingBean(StandingInstructionHistoryReadService.class)
+    public StandingInstructionHistoryReadService standingInstructionHistoryReadService(JdbcTemplate jdbcTemplate,
             ColumnValidator columnValidator, DatabaseSpecificSQLGenerator sqlGenerator, PaginationHelper paginationHelper) {
-        return new StandingInstructionHistoryReadPlatformServiceImpl(jdbcTemplate, columnValidator, sqlGenerator, paginationHelper);
+        return new StandingInstructionHistoryReadServiceImpl(jdbcTemplate, columnValidator, sqlGenerator, paginationHelper);
     }
 
     @Bean

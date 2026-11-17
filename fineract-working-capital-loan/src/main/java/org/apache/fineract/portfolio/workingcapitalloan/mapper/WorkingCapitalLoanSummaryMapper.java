@@ -20,7 +20,6 @@ package org.apache.fineract.portfolio.workingcapitalloan.mapper;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Objects;
 import org.apache.fineract.infrastructure.core.config.MapstructMapperConfig;
 import org.apache.fineract.infrastructure.core.domain.ExternalId;
 import org.apache.fineract.portfolio.accountdetails.data.WorkingCapitalLoanAccountSummaryData;
@@ -29,7 +28,6 @@ import org.apache.fineract.portfolio.loanaccount.data.LoanStatusEnumData;
 import org.apache.fineract.portfolio.loanaccount.domain.LoanStatus;
 import org.apache.fineract.portfolio.loanproduct.service.LoanEnumerations;
 import org.apache.fineract.portfolio.workingcapitalloan.domain.WorkingCapitalLoan;
-import org.apache.fineract.portfolio.workingcapitalloan.domain.WorkingCapitalLoanDisbursementDetails;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.Named;
@@ -39,17 +37,16 @@ public interface WorkingCapitalLoanSummaryMapper {
 
     @Mapping(target = "accountNo", source = "accountNumber")
     @Mapping(target = "externalId", source = "externalId", qualifiedByName = "externalIdToString")
-    @Mapping(target = "productId", source = "loan", qualifiedByName = "productIdFromLoan")
-    @Mapping(target = "productName", source = "loan", qualifiedByName = "productNameFromLoan")
-    @Mapping(target = "shortProductName", source = "loan", qualifiedByName = "shortProductNameFromLoan")
+    @Mapping(target = "productId", source = "loanProduct.id")
+    @Mapping(target = "productName", source = "loanProduct.name")
+    @Mapping(target = "shortProductName", source = "loanProduct.shortName")
     @Mapping(target = "status", source = "loanStatus", qualifiedByName = "loanStatusToEnumData")
     @Mapping(target = "currency", source = "loanProductRelatedDetails", qualifiedByName = "monetaryCurrencyToCurrencyData")
-    @Mapping(target = "loanType", expression = "java((org.apache.fineract.infrastructure.core.data.EnumOptionData) null)")
     @Mapping(target = "loanCycle", source = "loanProductCounter")
     @Mapping(target = "timeline", source = "loan", qualifiedByName = "buildTimeline")
-    @Mapping(target = "inArrears", expression = "java(Boolean.FALSE)")
-    @Mapping(target = "loanBalance", expression = "java(loan.getBalance() != null ? loan.getBalance().getPrincipalOutstanding() : null)")
-    @Mapping(target = "amountPaid", expression = "java(java.math.BigDecimal.ZERO)")
+    @Mapping(target = "loanBalance", source = "balance.totalOutstanding")
+    @Mapping(target = "amountPaid", source = "balance.totalRepayment")
+    @Mapping(target = "inArrears", ignore = true)
     WorkingCapitalLoanAccountSummaryData toData(WorkingCapitalLoan loan);
 
     List<WorkingCapitalLoanAccountSummaryData> toDataList(List<WorkingCapitalLoan> loans);
@@ -76,27 +73,11 @@ public interface WorkingCapitalLoanSummaryMapper {
         final LocalDate expectedDisbursementDate = loan.getDisbursementDetails().isEmpty() ? null
                 : loan.getDisbursementDetails().getFirst().getExpectedDisbursementDate();
         timeline.setExpectedDisbursementDate(expectedDisbursementDate);
-        final LocalDate actualDisbursementDate = loan.getDisbursementDetails().stream()
-                .map(WorkingCapitalLoanDisbursementDetails::getActualDisbursementDate).filter(Objects::nonNull).findFirst().orElse(null);
-        timeline.setActualDisbursementDate(actualDisbursementDate);
+        timeline.setActualDisbursementDate(loan.getFirstActualDisbursementDate());
         timeline.setClosedOnDate(loan.getClosedOnDate());
         timeline.setExpectedMaturityDate(loan.getExpectedMaturityDate());
         timeline.setActualMaturityDate(loan.getMaturedOnDate());
+        timeline.setOverpaidOnDate(loan.getOverpaidOnDate());
         return timeline;
-    }
-
-    @Named("productIdFromLoan")
-    default Long productIdFromLoan(final WorkingCapitalLoan loan) {
-        return (loan != null && loan.getLoanProduct() != null) ? loan.getLoanProduct().getId() : null;
-    }
-
-    @Named("productNameFromLoan")
-    default String productNameFromLoan(final WorkingCapitalLoan loan) {
-        return (loan != null && loan.getLoanProduct() != null) ? loan.getLoanProduct().getName() : null;
-    }
-
-    @Named("shortProductNameFromLoan")
-    default String shortProductNameFromLoan(final WorkingCapitalLoan loan) {
-        return (loan != null && loan.getLoanProduct() != null) ? loan.getLoanProduct().getShortName() : null;
     }
 }

@@ -18,16 +18,15 @@
  */
 package org.apache.fineract.integrationtests.common.workingcapitalloanproduct;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.fineract.client.feign.ObjectMapperFactory;
+import org.apache.fineract.client.models.PaymentAllocationOrder;
+import org.apache.fineract.client.models.PostAllowAttributeOverrides;
+import org.apache.fineract.client.models.PostPaymentAllocation;
 import org.apache.fineract.client.models.PostWorkingCapitalLoanProductsRequest;
 import org.apache.fineract.client.models.PostWorkingCapitalLoanProductsRequest.AccountingRuleEnum;
 import org.apache.fineract.client.models.PutWorkingCapitalLoanProductsProductIdRequest;
@@ -45,8 +44,10 @@ public class WorkingCapitalLoanProductTestBuilder {
     private static final String DEFAULT_AMORTIZATION = WorkingCapitalAmortizationType.EIR.name();
     private static final Integer DEFAULT_NPV_DAY_COUNT = 360;
     private static final BigDecimal DEFAULT_PRINCIPAL_AMOUNT = BigDecimal.valueOf(10000);
-    private static final BigDecimal DEFAULT_PERIOD_PAYMENT_RATE = BigDecimal.valueOf(1.0);
-    private static final Integer DEFAULT_PERIOD_PAYMENT_FREQUENCY = 30;
+    public static final BigDecimal DEFAULT_PERIOD_PAYMENT_RATE_PERCENT = BigDecimal.valueOf(18);
+    public static final BigDecimal DEFAULT_MIN_PERIOD_PAYMENT_RATE_PERCENT = BigDecimal.valueOf(5);
+    public static final BigDecimal DEFAULT_MAX_PERIOD_PAYMENT_RATE_PERCENT = BigDecimal.valueOf(25);
+    private static final Integer DEFAULT_PERIOD_PAYMENT_FREQUENCY = 1;
     private static final String DEFAULT_PERIOD_PAYMENT_FREQUENCY_TYPE = WorkingCapitalLoanPeriodFrequencyType.DAYS.name();
     private static final List<String> DEFAULT_PAYMENT_ALLOCATION_TYPES = List.of("DUE_PENALTY", "DUE_FEE", "DUE_PRINCIPAL",
             "IN_ADVANCE_PENALTY", "IN_ADVANCE_FEE", "IN_ADVANCE_PRINCIPAL");
@@ -67,20 +68,30 @@ public class WorkingCapitalLoanProductTestBuilder {
     private BigDecimal principalAmountDefault = DEFAULT_PRINCIPAL_AMOUNT;
     private BigDecimal principalAmountMax;
     private BigDecimal minPeriodPaymentRate;
-    private BigDecimal periodPaymentRate = DEFAULT_PERIOD_PAYMENT_RATE;
+    private BigDecimal periodPaymentRate = DEFAULT_PERIOD_PAYMENT_RATE_PERCENT;
     private BigDecimal maxPeriodPaymentRate;
+    private String paymentAmountCalculationStrategy;
+    private BigDecimal annualEir;
+    private BigDecimal minAnnualEir;
+    private BigDecimal maxAnnualEir;
+    private BigDecimal paymentAmount;
+    private BigDecimal minPaymentAmount;
+    private BigDecimal maxPaymentAmount;
     private BigDecimal discount;
     private Integer repaymentEvery = DEFAULT_PERIOD_PAYMENT_FREQUENCY;
     private String repaymentFrequencyType = DEFAULT_PERIOD_PAYMENT_FREQUENCY_TYPE;
     private Long breachId;
     private List<String> paymentAllocationTypes = DEFAULT_PAYMENT_ALLOCATION_TYPES;
+    private final List<PostPaymentAllocation> additionalPaymentAllocations = new ArrayList<>();
     private Map<String, Boolean> allowAttributeOverrides;
     private Integer delinquencyGraceDays;
     private String delinquencyStartType;
+    private Integer breachGraceDays;
+    private String breachStartType;
     private AccountingRuleEnum accountingRule = DEFAULT_ACCOUNTING_RULE;
     private Long nearBreachId;
 
-    // GL account IDs for cash-based accounting
+    // GL account IDs for accrual with deferred revenue amortization accounting
     private Long fundSourceAccountId;
     private Long loanPortfolioAccountId;
     private Long transfersInSuspenseAccountId;
@@ -93,6 +104,10 @@ public class WorkingCapitalLoanProductTestBuilder {
     private Long writeOffAccountId;
     private Long overpaymentLiabilityAccountId;
     private Long deferredIncomeLiabilityAccountId;
+    private Long chargeOffExpenseAccountId;
+    private Long incomeFromChargeOffFeesAccountId;
+    private Long incomeFromChargeOffPenaltyAccountId;
+    private Long goodwillCreditAccountId;
 
     public WorkingCapitalLoanProductTestBuilder withName(final String name) {
         this.name = name;
@@ -154,6 +169,17 @@ public class WorkingCapitalLoanProductTestBuilder {
         return this;
     }
 
+    /**
+     * Adds a payment allocation rule scoped to a specific transaction type (e.g. GOODWILL_CREDIT, CHARGE_ADJUSTMENT),
+     * on top of the DEFAULT rule. {@code allocationOrder} must contain every
+     * {@link org.apache.fineract.client.models.PaymentAllocationOrder} rule exactly once.
+     */
+    public WorkingCapitalLoanProductTestBuilder withPaymentAllocationForTransactionType(
+            final PostPaymentAllocation.TransactionTypeEnum transactionType, final List<String> allocationOrder) {
+        this.additionalPaymentAllocations.add(buildPaymentAllocationEntry(transactionType, allocationOrder));
+        return this;
+    }
+
     public WorkingCapitalLoanProductTestBuilder withPrincipalAmountMin(final BigDecimal principalAmountMin) {
         this.principalAmountMin = principalAmountMin;
         return this;
@@ -181,6 +207,41 @@ public class WorkingCapitalLoanProductTestBuilder {
 
     public WorkingCapitalLoanProductTestBuilder withMaxPeriodPaymentRate(final BigDecimal maxPeriodPaymentRate) {
         this.maxPeriodPaymentRate = maxPeriodPaymentRate;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withPaymentAmountCalculationStrategy(final String paymentAmountCalculationStrategy) {
+        this.paymentAmountCalculationStrategy = paymentAmountCalculationStrategy;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withAnnualEir(final BigDecimal annualEir) {
+        this.annualEir = annualEir;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withMinAnnualEir(final BigDecimal minAnnualEir) {
+        this.minAnnualEir = minAnnualEir;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withMaxAnnualEir(final BigDecimal maxAnnualEir) {
+        this.maxAnnualEir = maxAnnualEir;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withPaymentAmount(final BigDecimal paymentAmount) {
+        this.paymentAmount = paymentAmount;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withMinPaymentAmount(final BigDecimal minPaymentAmount) {
+        this.minPaymentAmount = minPaymentAmount;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withMaxPaymentAmount(final BigDecimal maxPaymentAmount) {
+        this.maxPaymentAmount = maxPaymentAmount;
         return this;
     }
 
@@ -221,6 +282,16 @@ public class WorkingCapitalLoanProductTestBuilder {
 
     public WorkingCapitalLoanProductTestBuilder withDelinquencyStartType(final String delinquencyStartType) {
         this.delinquencyStartType = delinquencyStartType;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withBreachGraceDays(final Integer breachGraceDays) {
+        this.breachGraceDays = breachGraceDays;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withBreachStartType(final String breachStartType) {
+        this.breachStartType = breachStartType;
         return this;
     }
 
@@ -289,6 +360,26 @@ public class WorkingCapitalLoanProductTestBuilder {
         return this;
     }
 
+    public WorkingCapitalLoanProductTestBuilder withChargeOffExpenseAccountId(final Long chargeOffExpenseAccountId) {
+        this.chargeOffExpenseAccountId = chargeOffExpenseAccountId;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withIncomeFromChargeOffFeesAccountId(final Long incomeFromChargeOffFeesAccountId) {
+        this.incomeFromChargeOffFeesAccountId = incomeFromChargeOffFeesAccountId;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withIncomeFromChargeOffPenaltyAccountId(final Long incomeFromChargeOffPenaltyAccountId) {
+        this.incomeFromChargeOffPenaltyAccountId = incomeFromChargeOffPenaltyAccountId;
+        return this;
+    }
+
+    public WorkingCapitalLoanProductTestBuilder withGoodwillCreditAccountId(final Long goodwillCreditAccountId) {
+        this.goodwillCreditAccountId = goodwillCreditAccountId;
+        return this;
+    }
+
     public PostWorkingCapitalLoanProductsRequest build() {
         final PostWorkingCapitalLoanProductsRequest request = new PostWorkingCapitalLoanProductsRequest();
         populateCommonFields(request);
@@ -325,6 +416,16 @@ public class WorkingCapitalLoanProductTestBuilder {
         request.setMinPeriodPaymentRate(this.minPeriodPaymentRate);
         request.setPeriodPaymentRate(this.periodPaymentRate);
         request.setMaxPeriodPaymentRate(this.maxPeriodPaymentRate);
+        if (this.paymentAmountCalculationStrategy != null) {
+            request.setPaymentAmountCalculationStrategy(PostWorkingCapitalLoanProductsRequest.PaymentAmountCalculationStrategyEnum
+                    .valueOf(this.paymentAmountCalculationStrategy));
+        }
+        request.setAnnualEir(this.annualEir);
+        request.setMinAnnualEir(this.minAnnualEir);
+        request.setMaxAnnualEir(this.maxAnnualEir);
+        request.setPaymentAmount(this.paymentAmount);
+        request.setMinPaymentAmount(this.minPaymentAmount);
+        request.setMaxPaymentAmount(this.maxPaymentAmount);
         request.setDiscount(this.discount);
         request.setRepaymentEvery(this.repaymentEvery);
         if (this.repaymentFrequencyType != null) {
@@ -333,6 +434,8 @@ public class WorkingCapitalLoanProductTestBuilder {
         }
         request.setDelinquencyGraceDays(this.delinquencyGraceDays);
         request.setDelinquencyStartType(this.delinquencyStartType);
+        request.setBreachGraceDays(this.breachGraceDays);
+        request.setBreachStartType(this.breachStartType);
         request.setBreachId(this.breachId);
         request.setAccountingRule(this.accountingRule);
         request.setNearBreachId(this.nearBreachId);
@@ -348,6 +451,10 @@ public class WorkingCapitalLoanProductTestBuilder {
         request.setWriteOffAccountId(this.writeOffAccountId);
         request.setOverpaymentLiabilityAccountId(this.overpaymentLiabilityAccountId);
         request.setDeferredIncomeLiabilityAccountId(this.deferredIncomeLiabilityAccountId);
+        request.setChargeOffExpenseAccountId(this.chargeOffExpenseAccountId);
+        request.setIncomeFromChargeOffFeesAccountId(this.incomeFromChargeOffFeesAccountId);
+        request.setIncomeFromChargeOffPenaltyAccountId(this.incomeFromChargeOffPenaltyAccountId);
+        request.setGoodwillCreditAccountId(this.goodwillCreditAccountId);
         request.setLocale("en_US");
         request.setDateFormat("yyyy-MM-dd");
     }
@@ -379,6 +486,8 @@ public class WorkingCapitalLoanProductTestBuilder {
         }
         request.setDelinquencyGraceDays(this.delinquencyGraceDays);
         request.setDelinquencyStartType(this.delinquencyStartType);
+        request.setBreachGraceDays(this.breachGraceDays);
+        request.setBreachStartType(this.breachStartType);
         request.setBreachId(this.breachId);
         if (this.accountingRule != null) {
             request.setAccountingRule(PutWorkingCapitalLoanProductsProductIdRequest.AccountingRuleEnum.valueOf(this.accountingRule.name()));
@@ -389,85 +498,68 @@ public class WorkingCapitalLoanProductTestBuilder {
     }
 
     private void setPaymentAllocation(final PostWorkingCapitalLoanProductsRequest request) {
-        setPaymentAllocation(request, PostWorkingCapitalLoanProductsRequest.class);
+        final List<PostPaymentAllocation> allocations = buildPaymentAllocations();
+        if (!allocations.isEmpty()) {
+            request.setPaymentAllocation(allocations);
+        }
     }
 
     private void setPaymentAllocation(final PutWorkingCapitalLoanProductsProductIdRequest request) {
-        setPaymentAllocation(request, PutWorkingCapitalLoanProductsProductIdRequest.class);
+        final List<PostPaymentAllocation> allocations = buildPaymentAllocations();
+        if (!allocations.isEmpty()) {
+            request.setPaymentAllocation(allocations);
+        }
     }
 
-    private <T> void setPaymentAllocation(final T request, final Class<T> requestClass) {
+    private List<PostPaymentAllocation> buildPaymentAllocations() {
+        final List<PostPaymentAllocation> allocations = new ArrayList<>();
         if (this.paymentAllocationTypes != null && !this.paymentAllocationTypes.isEmpty()) {
-            try {
-                final ObjectMapper objectMapper = ObjectMapperFactory.getShared();
-                final String requestJson = objectMapper.writeValueAsString(request);
-                final ObjectNode requestNode = (ObjectNode) objectMapper.readTree(requestJson);
-                final ArrayNode paymentAllocationArray = objectMapper.createArrayNode();
-                final ObjectNode paymentAllocationNode = objectMapper.createObjectNode();
-                paymentAllocationNode.put("transactionType", "DEFAULT");
-                final ArrayNode paymentAllocationOrderArray = objectMapper.createArrayNode();
-                int order = 1;
-                for (final String allocationType : this.paymentAllocationTypes) {
-                    final ObjectNode orderItem = objectMapper.createObjectNode();
-                    orderItem.put("paymentAllocationRule", allocationType);
-                    orderItem.put("order", order++);
-                    paymentAllocationOrderArray.add(orderItem);
-                }
-                paymentAllocationNode.set("paymentAllocationOrder", paymentAllocationOrderArray);
-                paymentAllocationArray.add(paymentAllocationNode);
-                requestNode.set("paymentAllocation", paymentAllocationArray);
-                final T updatedRequest = objectMapper.treeToValue(requestNode, requestClass);
-                copyAllFields(updatedRequest, request, requestClass);
-            } catch (final Exception e) {
-                throw new IllegalStateException("Failed to set paymentAllocation", e);
-            }
+            allocations.add(buildPaymentAllocationEntry(PostPaymentAllocation.TransactionTypeEnum.DEFAULT, this.paymentAllocationTypes));
         }
+        allocations.addAll(this.additionalPaymentAllocations);
+        return allocations;
+    }
+
+    private static PostPaymentAllocation buildPaymentAllocationEntry(final PostPaymentAllocation.TransactionTypeEnum transactionType,
+            final List<String> allocationOrder) {
+        final PostPaymentAllocation paymentAllocation = new PostPaymentAllocation();
+        paymentAllocation.setTransactionType(transactionType);
+        paymentAllocation.setPaymentAllocationOrder(IntStream.range(0, allocationOrder.size()).mapToObj(index -> {
+            PaymentAllocationOrder paymentAllocationOrder = new PaymentAllocationOrder();
+            paymentAllocationOrder.setOrder(index + 1);
+            paymentAllocationOrder.setPaymentAllocationRule(allocationOrder.get(index));
+            return paymentAllocationOrder;
+        }).toList());
+        return paymentAllocation;
     }
 
     private void setAllowAttributeOverrides(final PostWorkingCapitalLoanProductsRequest request) {
-        setAllowAttributeOverrides(request, PostWorkingCapitalLoanProductsRequest.class);
+        PostAllowAttributeOverrides defaultAllowAttributeOverrides = buildPostAllowAttributeOverrides();
+        request.setAllowAttributeOverrides(defaultAllowAttributeOverrides);
     }
 
     private void setAllowAttributeOverrides(final PutWorkingCapitalLoanProductsProductIdRequest request) {
-        setAllowAttributeOverrides(request, PutWorkingCapitalLoanProductsProductIdRequest.class);
+        PostAllowAttributeOverrides defaultAllowAttributeOverrides = buildPostAllowAttributeOverrides();
+        request.setAllowAttributeOverrides(defaultAllowAttributeOverrides);
     }
 
-    private <T> void setAllowAttributeOverrides(final T request, final Class<T> requestClass) {
-        if (this.allowAttributeOverrides == null || this.allowAttributeOverrides.isEmpty()) {
-            return;
-        }
-
-        try {
-            final ObjectMapper objectMapper = ObjectMapperFactory.getShared();
-            final String requestJson = objectMapper.writeValueAsString(request);
-            final ObjectNode requestNode = (ObjectNode) objectMapper.readTree(requestJson);
-            final ObjectNode allowOverridesNode = objectMapper.createObjectNode();
+    private PostAllowAttributeOverrides buildPostAllowAttributeOverrides() {
+        if (allowAttributeOverrides != null) {
+            PostAllowAttributeOverrides defaultAllowAttributeOverrides = new PostAllowAttributeOverrides();
             for (final Map.Entry<String, Boolean> entry : this.allowAttributeOverrides.entrySet()) {
-                allowOverridesNode.put(entry.getKey(), entry.getValue());
-            }
-            requestNode.set("allowAttributeOverrides", allowOverridesNode);
-            final T updatedRequest = objectMapper.treeToValue(requestNode, requestClass);
-            copyAllFields(updatedRequest, request, requestClass);
-        } catch (final Exception e) {
-            throw new IllegalStateException("Failed to set allowAttributeOverrides", e);
-        }
-    }
-
-    private <T> void copyAllFields(final T source, final T target, final Class<T> clazz) {
-        final Field[] fields = clazz.getDeclaredFields();
-        for (final Field field : fields) {
-            try {
-                if (Modifier.isStatic(field.getModifiers()) && Modifier.isFinal(field.getModifiers())) {
-                    continue;
+                switch (entry.getKey()) {
+                    case "breach" -> defaultAllowAttributeOverrides.breach(entry.getValue());
+                    case "delinquencyBucketClassification" ->
+                        defaultAllowAttributeOverrides.delinquencyBucketClassification(entry.getValue());
+                    case "periodPaymentFrequency" -> defaultAllowAttributeOverrides.periodPaymentFrequency(entry.getValue());
+                    case "periodPaymentFrequencyType" -> defaultAllowAttributeOverrides.periodPaymentFrequencyType(entry.getValue());
+                    case "discountDefault" -> defaultAllowAttributeOverrides.discountDefault(entry.getValue());
+                    default -> throw new IllegalArgumentException("Unknown allow attribute override " + entry.getKey());
                 }
-                field.setAccessible(true);
-                final Object value = field.get(source);
-                if (value != null) {
-                    field.set(target, value);
-                }
-            } catch (final IllegalAccessException e) {
-                log.warn("Failed to copy field {}: {}", field.getName(), e.getMessage());
             }
+            return defaultAllowAttributeOverrides;
+        } else {
+            return null;
         }
     }
 }

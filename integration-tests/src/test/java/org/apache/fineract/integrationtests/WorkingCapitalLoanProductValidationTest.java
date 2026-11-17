@@ -23,17 +23,18 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
-import org.apache.fineract.client.feign.ObjectMapperFactory;
 import org.apache.fineract.client.feign.util.CallFailedRuntimeException;
+import org.apache.fineract.client.models.GetWorkingCapitalLoanProductsTemplateResponse;
+import org.apache.fineract.client.models.PaymentAllocationOrder;
 import org.apache.fineract.client.models.PostWorkingCapitalLoanProductsRequest;
 import org.apache.fineract.client.models.PutWorkingCapitalLoanProductsProductIdRequest;
+import org.apache.fineract.client.models.WorkingCapitalBreachRequest;
 import org.apache.fineract.integrationtests.common.Utils;
+import org.apache.fineract.integrationtests.common.workingcapitalloanbreach.WorkingCapitalBreachHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanproduct.WorkingCapitalLoanProductHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanproduct.WorkingCapitalLoanProductTestBuilder;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,7 @@ import org.junit.jupiter.api.Test;
 public class WorkingCapitalLoanProductValidationTest {
 
     private WorkingCapitalLoanProductHelper wclProductHelper;
+    private final WorkingCapitalBreachHelper breachHelper = new WorkingCapitalBreachHelper();
 
     @BeforeEach
     public void setup() {
@@ -365,8 +367,7 @@ public class WorkingCapitalLoanProductValidationTest {
                 () -> wclProductHelper.createWorkingCapitalLoanProduct(request));
         assertEquals(400, exception.getStatus());
         assertNotNull(exception.getDeveloperMessage());
-        assertEquals(
-                "Validation errors: [maxPrincipal] The parameter `maxPrincipal` must be greater than 0.; [principal] Failed data validation due to: must.be.less.than.or.equal.to.max.",
+        assertEquals("Validation errors: [maxPrincipal] The parameter `maxPrincipal` must be greater than 0.",
                 exception.getDeveloperMessage());
     }
 
@@ -428,8 +429,7 @@ public class WorkingCapitalLoanProductValidationTest {
                 () -> wclProductHelper.createWorkingCapitalLoanProduct(request));
         assertEquals(400, exception.getStatus());
         assertNotNull(exception.getDeveloperMessage());
-        assertEquals(
-                "Validation errors: [maxPeriodPaymentRate] The parameter `maxPeriodPaymentRate` must be greater than or equal to 0.; [periodPaymentRate] Failed data validation due to: must.be.less.than.or.equal.to.max.",
+        assertEquals("Validation errors: [maxPeriodPaymentRate] The parameter `maxPeriodPaymentRate` must be greater than or equal to 0.",
                 exception.getDeveloperMessage());
     }
 
@@ -513,25 +513,11 @@ public class WorkingCapitalLoanProductValidationTest {
         // Given
         final PostWorkingCapitalLoanProductsRequest baseRequest = new WorkingCapitalLoanProductTestBuilder().build();
         // Set paymentAllocation with empty paymentAllocationOrder
-        final PostWorkingCapitalLoanProductsRequest request;
-        try {
-            final ObjectMapper objectMapper = ObjectMapperFactory.getShared();
-            final String requestJson = objectMapper.writeValueAsString(baseRequest);
-            final ObjectNode requestNode = (ObjectNode) objectMapper.readTree(requestJson);
-            final ArrayNode paymentAllocationArray = objectMapper.createArrayNode();
-            final ObjectNode paymentAllocationNode = objectMapper.createObjectNode();
-            paymentAllocationNode.put("transactionType", "DEFAULT");
-            paymentAllocationNode.set("paymentAllocationOrder", objectMapper.createArrayNode()); // Empty array
-            paymentAllocationArray.add(paymentAllocationNode);
-            requestNode.set("paymentAllocation", paymentAllocationArray);
-            request = objectMapper.treeToValue(requestNode, PostWorkingCapitalLoanProductsRequest.class);
-        } catch (final Exception e) {
-            throw new IllegalStateException("Failed to set paymentAllocation with empty paymentAllocationOrder", e);
-        }
+        baseRequest.getPaymentAllocation().get(0).setPaymentAllocationOrder(List.of());
 
         // When & Then - Should throw CallFailedRuntimeException with status 400
         final CallFailedRuntimeException exception = assertThrows(CallFailedRuntimeException.class,
-                () -> wclProductHelper.createWorkingCapitalLoanProduct(request));
+                () -> wclProductHelper.createWorkingCapitalLoanProduct(baseRequest));
         assertEquals(400, exception.getStatus());
         assertNotNull(exception.getDeveloperMessage());
         assertEquals("Validation errors: [id] Payment allocation order cannot be empty", exception.getDeveloperMessage());
@@ -542,30 +528,12 @@ public class WorkingCapitalLoanProductValidationTest {
         // Given
         final PostWorkingCapitalLoanProductsRequest baseRequest = new WorkingCapitalLoanProductTestBuilder().build();
         // Set paymentAllocation with invalid allocation type
-        final PostWorkingCapitalLoanProductsRequest request;
-        try {
-            final ObjectMapper objectMapper = ObjectMapperFactory.getShared();
-            final String requestJson = objectMapper.writeValueAsString(baseRequest);
-            final ObjectNode requestNode = (ObjectNode) objectMapper.readTree(requestJson);
-            final ArrayNode paymentAllocationArray = objectMapper.createArrayNode();
-            final ObjectNode paymentAllocationNode = objectMapper.createObjectNode();
-            paymentAllocationNode.put("transactionType", "DEFAULT");
-            final ArrayNode paymentAllocationOrderArray = objectMapper.createArrayNode();
-            final ObjectNode orderItem = objectMapper.createObjectNode();
-            orderItem.put("paymentAllocationRule", "INVALID_TYPE");
-            orderItem.put("order", 1);
-            paymentAllocationOrderArray.add(orderItem);
-            paymentAllocationNode.set("paymentAllocationOrder", paymentAllocationOrderArray);
-            paymentAllocationArray.add(paymentAllocationNode);
-            requestNode.set("paymentAllocation", paymentAllocationArray);
-            request = objectMapper.treeToValue(requestNode, PostWorkingCapitalLoanProductsRequest.class);
-        } catch (final Exception e) {
-            throw new IllegalStateException("Failed to set paymentAllocation with invalid type", e);
-        }
+        PaymentAllocationOrder paymentAllocationOrder = new PaymentAllocationOrder().order(1).paymentAllocationRule("DUE_PRINCIPAL");
+        baseRequest.getPaymentAllocation().get(0).setPaymentAllocationOrder(List.of(paymentAllocationOrder));
 
         // When & Then - Should throw CallFailedRuntimeException with status 400
         final CallFailedRuntimeException exception = assertThrows(CallFailedRuntimeException.class,
-                () -> wclProductHelper.createWorkingCapitalLoanProduct(request));
+                () -> wclProductHelper.createWorkingCapitalLoanProduct(baseRequest));
         assertEquals(400, exception.getStatus());
         assertNotNull(exception.getDeveloperMessage());
         assertEquals(
@@ -631,9 +599,9 @@ public class WorkingCapitalLoanProductValidationTest {
     public void testCreateWorkingCapitalLoanProductWithMinGreaterThanMaxPeriodPaymentRate() {
         // Given
         final PostWorkingCapitalLoanProductsRequest request = new WorkingCapitalLoanProductTestBuilder() //
-                .withMinPeriodPaymentRate(BigDecimal.valueOf(2.0)) //
-                .withPeriodPaymentRate(BigDecimal.valueOf(1.0)) //
-                .withMaxPeriodPaymentRate(BigDecimal.valueOf(3.0)) //
+                .withMinPeriodPaymentRate(BigDecimal.valueOf(20)) //
+                .withPeriodPaymentRate(BigDecimal.valueOf(10)) //
+                .withMaxPeriodPaymentRate(BigDecimal.valueOf(30)) //
                 .build();
 
         // When & Then - Should throw CallFailedRuntimeException with status 400
@@ -649,9 +617,9 @@ public class WorkingCapitalLoanProductValidationTest {
     public void testCreateWorkingCapitalLoanProductWithDefaultLessThanMinPeriodPaymentRate() {
         // Given
         final PostWorkingCapitalLoanProductsRequest request = new WorkingCapitalLoanProductTestBuilder() //
-                .withMinPeriodPaymentRate(BigDecimal.valueOf(1.0)) //
-                .withPeriodPaymentRate(BigDecimal.valueOf(0.5)) //
-                .withMaxPeriodPaymentRate(BigDecimal.valueOf(2.0)) //
+                .withMinPeriodPaymentRate(BigDecimal.valueOf(10)) //
+                .withPeriodPaymentRate(BigDecimal.valueOf(5)) //
+                .withMaxPeriodPaymentRate(BigDecimal.valueOf(25)) //
                 .build();
 
         // When & Then - Should throw CallFailedRuntimeException with status 400
@@ -667,9 +635,9 @@ public class WorkingCapitalLoanProductValidationTest {
     public void testCreateWorkingCapitalLoanProductWithDefaultGreaterThanMaxPeriodPaymentRate() {
         // Given
         final PostWorkingCapitalLoanProductsRequest request = new WorkingCapitalLoanProductTestBuilder() //
-                .withMinPeriodPaymentRate(BigDecimal.valueOf(0.5)) //
-                .withPeriodPaymentRate(BigDecimal.valueOf(3.0)) //
-                .withMaxPeriodPaymentRate(BigDecimal.valueOf(2.0)) //
+                .withMinPeriodPaymentRate(BigDecimal.valueOf(5)) //
+                .withPeriodPaymentRate(BigDecimal.valueOf(30)) //
+                .withMaxPeriodPaymentRate(BigDecimal.valueOf(25)) //
                 .build();
 
         // When & Then - Should throw CallFailedRuntimeException with status 400
@@ -776,5 +744,30 @@ public class WorkingCapitalLoanProductValidationTest {
                 exception.getDeveloperMessage());
 
         wclProductHelper.deleteWorkingCapitalLoanProductById(productId);
+    }
+
+    @Test
+    public void testCreateWorkingCapitalLoanProductWithNegativeBreachGraceDays() {
+        // Given - breachGraceDays must be >= 0
+        final GetWorkingCapitalLoanProductsTemplateResponse template = wclProductHelper.retrieveTemplate();
+        Long breachId = template.getBreachOptions() != null && !template.getBreachOptions().isEmpty()
+                ? template.getBreachOptions().getFirst().getId()
+                : null;
+        if (breachId == null) {
+            final WorkingCapitalBreachRequest createBody = breachHelper.createBreachRequest(Utils.randomStringGenerator("Breach", 20), 20,
+                    "DAYS", "PERCENTAGE", BigDecimal.valueOf(7.5));
+            breachId = breachHelper.create(createBody);
+        }
+        assertNotNull(breachId);
+        final PostWorkingCapitalLoanProductsRequest request = new WorkingCapitalLoanProductTestBuilder().withBreachId(breachId)
+                .withBreachGraceDays(-1).build();
+
+        // When & Then
+        final CallFailedRuntimeException exception = assertThrows(CallFailedRuntimeException.class,
+                () -> wclProductHelper.createWorkingCapitalLoanProduct(request));
+        assertEquals(400, exception.getStatus());
+        assertNotNull(exception.getDeveloperMessage());
+        assertEquals("Validation errors: [breachGraceDays] The parameter `breachGraceDays` must be zero or greater.",
+                exception.getDeveloperMessage());
     }
 }

@@ -52,5 +52,10 @@ public class ChargeRequest implements Serializable {
     private BigDecimal minCap;
     private BigDecimal maxCap;
     private Long taxGroupId;
+    private Long incomeAccountId;
+    private String amortizationPeriodType;
+    private Integer amortizationDays;
+    private String amortizationCalculationType;
+    private String amortizationIncomeType;
 
 }

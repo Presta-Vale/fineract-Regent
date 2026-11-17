@@ -20,7 +20,9 @@ package org.apache.fineract.portfolio.charge.api;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Set;
+import org.apache.fineract.infrastructure.core.data.StringEnumOptionData;
 
 /**
  * Created by Chirag Gupta on 12/01/17.
@@ -96,6 +98,18 @@ final class ChargesApiResourceSwagger {
             public String description;
         }
 
+        static final class GetChargesFeeFrequencyResponse {
+
+            private GetChargesFeeFrequencyResponse() {}
+
+            @Schema(example = "2")
+            public Long id;
+            @Schema(example = "periodFrequencyType.months")
+            public String code;
+            @Schema(example = "Monthly")
+            public String value;
+        }
+
         static final class GetChargesTaxGroup {
 
             private GetChargesTaxGroup() {}
@@ -121,9 +135,15 @@ final class ChargesApiResourceSwagger {
         public GetChargesAppliesToResponse chargeAppliesTo;
         public GetChargesCalculationTypeResponse chargeCalculationType;
         public GetChargesPaymentModeResponse chargePaymentMode;
+        public GetChargesFeeFrequencyResponse feeFrequency;
         public BigDecimal minCap;
         public BigDecimal maxCap;
         public GetChargesTaxGroup taxGroup;
+        public StringEnumOptionData amortizationPeriodType;
+        @Schema(example = "30")
+        public Integer amortizationDays;
+        public StringEnumOptionData amortizationCalculationType;
+        public StringEnumOptionData amortizationIncomeType;
     }
 
     @Schema(description = "PostChargesRequest")
@@ -159,6 +179,22 @@ final class ChargesApiResourceSwagger {
         public BigDecimal maxCap;
         @Schema(example = "1")
         public Long taxGroupId;
+        @Schema(example = "1")
+        public Integer freeWithdrawalFrequency;
+        @Schema(example = "10")
+        public Integer restartCountFrequency;
+        @Schema(example = "1")
+        public Integer countFrequencyType;
+        @Schema(example = "true")
+        public boolean enableFreeWithdrawalCharge;
+        @Schema(example = "FULL_LOAN_TERM", allowableValues = { "NONE", "FULL_LOAN_TERM", "NUMBER_OF_DAYS" })
+        public String amortizationPeriodType;
+        @Schema(example = "30")
+        public Integer amortizationDays;
+        @Schema(example = "FLAT", allowableValues = { "FLAT", "EFFECTIVE_RATE" })
+        public String amortizationCalculationType;
+        @Schema(example = "FEE", allowableValues = { "FEE", "INTEREST" })
+        public String amortizationIncomeType;
     }
 
     @Schema(description = "PostChargesResponse")
@@ -221,6 +257,14 @@ final class ChargesApiResourceSwagger {
         public BigDecimal maxCap;
         @Schema(example = "1")
         public Long taxGroupId;
+        @Schema(example = "FULL_LOAN_TERM", allowableValues = { "NONE", "FULL_LOAN_TERM", "NUMBER_OF_DAYS" })
+        public String amortizationPeriodType;
+        @Schema(example = "30")
+        public Integer amortizationDays;
+        @Schema(example = "FLAT", allowableValues = { "FLAT", "EFFECTIVE_RATE" })
+        public String amortizationCalculationType;
+        @Schema(example = "FEE", allowableValues = { "FEE", "INTEREST" })
+        public String amortizationIncomeType;
     }
 
     @Schema(description = "PutChargesChargeIdResponse")
@@ -297,5 +341,9 @@ final class ChargesApiResourceSwagger {
         public Set<GetChargesTemplateLoanChargeCalculationTypeOptions> savingsChargeCalculationTypeOptions;
         public Set<GetChargesTemplateLoanChargeTimeTypeOptions> savingsChargeTimeTypeOptions;
         public Set<GetChargesTemplateFeeFrequencyOptions> feeFrequencyOptions;
+        public Set<GetChargesResponse.GetChargesTaxGroup> taxGroupOptions;
+        public List<StringEnumOptionData> amortizationPeriodTypeOptions;
+        public List<StringEnumOptionData> amortizationCalculationTypeOptions;
+        public List<StringEnumOptionData> amortizationIncomeTypeOptions;
     }
 }

@@ -37,10 +37,43 @@ import lombok.Setter;
 public class WorkingCapitalLoanBalanceData implements Serializable {
 
     private Long id;
+    private BigDecimal principal;
+    private BigDecimal principalPaid;
+    private BigDecimal principalAdjustment;
     private BigDecimal principalOutstanding;
-    private BigDecimal totalPaidPrincipal;
-    private BigDecimal totalPayment;
-    private BigDecimal realizedIncome;
-    private BigDecimal unrealizedIncome;
+    private BigDecimal fee;
+    private BigDecimal feePaid;
+    private BigDecimal feeOutstanding;
+    private BigDecimal penalty;
+    private BigDecimal penaltyPaid;
+    private BigDecimal penaltyOutstanding;
+    /**
+     * Portions moved out of the outstanding balance by a write-off. Without them the exposed figures cannot be
+     * reconciled: {@code principalOutstanding} already nets these off, so a written-off loan reports a gross principal
+     * and a zero outstanding with nothing in between to explain the difference.
+     */
+    private BigDecimal principalWrittenOff;
+    private BigDecimal feeWrittenOff;
+    private BigDecimal penaltyWrittenOff;
+    private BigDecimal totalWrittenOff;
+    /** Collected on the loan after it was written off. Recovery income; it does not reduce {@code totalWrittenOff}. */
+    private BigDecimal totalRecovered;
+    /** What is still recoverable: {@code totalWrittenOff - totalRecovered}. Caps the next recovery payment. */
+    private BigDecimal writtenOffOutstanding;
+    /**
+     * Netted off {@code feeOutstanding} and {@code penaltyOutstanding} like the written-off portions, for the same
+     * reconciliation.
+     */
+    private BigDecimal feeWaived;
+    private BigDecimal penaltyWaived;
+    private BigDecimal realizedIncomeFromDiscountFee;
+    private BigDecimal unrealizedIncomeFromDiscountFee;
     private BigDecimal overpaymentAmount;
+    private BigDecimal totalExpectedRepayment;
+    private BigDecimal totalRepayment;
+    private BigDecimal totalOutstanding;
+    private BigDecimal totalDisbursement;
+    private BigDecimal totalDiscountFee;
+    private BigDecimal totalDiscountFeeAdjustment;
+    private BigDecimal breachPastDueAmount;
 }

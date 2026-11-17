@@ -45,7 +45,8 @@ import org.apache.fineract.portfolio.loanproduct.domain.LoanProduct;
 import org.apache.fineract.portfolio.loanproduct.domain.LoanProductRepository;
 import org.apache.fineract.portfolio.paymentdetail.PaymentDetailConstants;
 import org.apache.fineract.portfolio.paymenttype.domain.PaymentType;
-import org.apache.fineract.portfolio.paymenttype.domain.PaymentTypeRepositoryWrapper;
+import org.apache.fineract.portfolio.paymenttype.domain.PaymentTypeRepository;
+import org.apache.fineract.portfolio.paymenttype.exception.PaymentTypeNotFoundException;
 import org.apache.fineract.portfolio.tax.domain.TaxGroup;
 import org.apache.fineract.portfolio.tax.domain.TaxGroupRepositoryWrapper;
 import org.springframework.cache.annotation.CacheEvict;
@@ -66,7 +67,7 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
     private final FineractEntityAccessUtil fineractEntityAccessUtil;
     private final GLAccountRepositoryWrapper glAccountRepository;
     private final TaxGroupRepositoryWrapper taxGroupRepository;
-    private final PaymentTypeRepositoryWrapper paymentTyperepositoryWrapper;
+    private final PaymentTypeRepository paymentTypeRepository;
 
     @Transactional
     @Override
@@ -95,11 +96,12 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
             if (enablePaymentType) {
                 final Long paymentTypeId = command.longValueOfParameterNamed(PaymentDetailConstants.paymentTypeParamName);
                 if (paymentTypeId != null) {
-                    paymentType = this.paymentTyperepositoryWrapper.findOneWithNotFoundDetection(paymentTypeId);
+                    paymentType = findPaymentTypeWithNotFoundDetection(paymentTypeId);
                 }
             }
 
             final Charge charge = Charge.fromJson(command, glAccount, taxGroup, paymentType);
+            this.fromApiJsonDeserializer.validateAmortizationConfiguration(charge);
             this.chargeRepository.saveAndFlush(charge);
 
             // check if the office specific products are enabled. If yes, then
@@ -136,7 +138,12 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
             final Map<String, Object> changes = chargeForUpdate.update(command);
 
             this.fromApiJsonDeserializer.validateChargeTimeNCalculationType(chargeForUpdate.getChargeTimeType(),
-                    chargeForUpdate.getChargeCalculation());
+                    chargeForUpdate.getChargeCalculation(), chargeForUpdate.isPenalty());
+            this.fromApiJsonDeserializer.validateAmortizationConfiguration(chargeForUpdate);
+
+            if (changes.containsKey(Charge.CHARGE_TIME_PARAM_NAME) && chargeForUpdate.isDownPaymentCharge()) {
+                validateLoanProductsSupportDownPaymentCharges(chargeId);
+            }
 
             // MIFOSX-900: Check if the Charge has been active before and now is
             // deactivated:
@@ -180,7 +187,7 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
                 if (paymentTypeIdNewValue != null) {
                     final Long paymentTypeId = paymentTypeIdNewValue.longValue();
 
-                    paymentType = this.paymentTyperepositoryWrapper.findOneWithNotFoundDetection(paymentTypeId);
+                    paymentType = findPaymentTypeWithNotFoundDetection(paymentTypeId);
                     chargeForUpdate.setPaymentType(paymentType);
                 }
 
@@ -227,9 +234,11 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
         final Collection<LoanProduct> loanProducts = this.loanProductRepository.retrieveLoanProductsByChargeId(chargeId);
         final Boolean isChargeExistWithLoans = isAnyLoansAssociateWithThisCharge(chargeId);
         final Boolean isChargeExistWithSavings = isAnySavingsAssociateWithThisCharge(chargeId);
+        final Boolean isChargeExistWithWorkingCapitalLoan = chargeRepository.isAnyWorkingCapitalLoansAssociateWithThisCharge(chargeId)
+                .isPresent();
 
         // TODO: Change error messages around:
-        if (!loanProducts.isEmpty() || isChargeExistWithLoans || isChargeExistWithSavings) {
+        if (!loanProducts.isEmpty() || isChargeExistWithLoans || isChargeExistWithSavings || isChargeExistWithWorkingCapitalLoan) {
             throw new ChargeCannotBeDeletedException("error.msg.charge.cannot.be.deleted.it.is.already.used.in.loan",
                     "This charge cannot be deleted, it is already used in loan");
         }
@@ -253,9 +262,13 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
                     "name", name);
         }
 
-        log.error("Error occured.", dve);
+        log.error("Error occurred.", dve);
         throw ErrorHandler.getMappable(dve, "error.msg.charge.unknown.data.integrity.issue",
                 "Unknown data integrity issue with resource: " + realCause.getMessage());
+    }
+
+    private PaymentType findPaymentTypeWithNotFoundDetection(final Long paymentTypeId) {
+        return this.paymentTypeRepository.findById(paymentTypeId).orElseThrow(() -> new PaymentTypeNotFoundException(paymentTypeId));
     }
 
     private boolean isAnyLoansAssociateWithThisCharge(final Long chargeId) {
@@ -270,6 +283,15 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
         return Boolean.valueOf(isSavingsUsingCharge);
     }
 
+    private void validateLoanProductsSupportDownPaymentCharges(final Long chargeId) {
+        final boolean attachedToUnsupportedProduct = this.loanProductRepository.retrieveLoanProductsByChargeId(chargeId).stream()
+                .anyMatch(product -> !product.supportsDownPaymentCharges());
+        if (attachedToUnsupportedProduct) {
+            throw new ChargeCannotBeUpdatedException("error.msg.charge.down.payment.requires.progressive.down.payment.loan.product",
+                    "Charge cannot be changed to a down payment charge, it is attached to a loan product that is not progressive or has no down payment enabled.");
+        }
+    }
+
     private boolean isAnyLoanProductsAssociateWithThisCharge(final Long chargeId) {
         final String sql = "select (CASE WHEN exists (select 1 from m_product_loan_charge lc where lc.charge_id = ?) THEN 'true' ELSE 'false' END)";
         final String isLoansUsingCharge = this.jdbcTemplate.queryForObject(sql, String.class, new Object[] { chargeId });
@@ -277,7 +299,7 @@ public class ChargeWritePlatformServiceJpaRepositoryImpl implements ChargeWriteP
     }
 
     private boolean isAnySavingsProductsAssociateWithThisCharge(final Long chargeId) {
-        final String sql = "select (CASE WHEN (exists (select 1 from m_savings_product_charge sc where sc.charge_id = ?)) = 1 THEN 'true' ELSE 'false' END)";
+        final String sql = "select (CASE WHEN exists (select 1 from m_savings_product_charge sc where sc.charge_id = ?) THEN 'true' ELSE 'false' END)";
         final String isSavingsUsingCharge = this.jdbcTemplate.queryForObject(sql, String.class, new Object[] { chargeId });
         return Boolean.valueOf(isSavingsUsingCharge);
     }

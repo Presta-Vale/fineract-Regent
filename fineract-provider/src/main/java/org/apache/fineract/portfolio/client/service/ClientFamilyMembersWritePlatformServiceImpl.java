@@ -224,7 +224,6 @@ public class ClientFamilyMembersWritePlatformServiceImpl implements ClientFamily
                     date = LocalDate.parse(member.get("dateOfBirth").getAsString(), formatter);
                     dateOfBirth = date;
                 } catch (DateTimeParseException e) {
-                    // TODO Auto-generated catch block
                     LOG.error("Problem occurred in addClientFamilyMember function", e);
                 }
 
@@ -318,8 +317,8 @@ public class ClientFamilyMembersWritePlatformServiceImpl implements ClientFamily
             clientFamilyMember.setIsDependent(isDependent);
         }
 
-        if (command.longValueOfParameterNamed("relationShipId") != null) {
-            relationshipId = command.longValueOfParameterNamed("relationShipId");
+        if (command.longValueOfParameterNamed("relationshipId") != null) {
+            relationshipId = command.longValueOfParameterNamed("relationshipId");
             relationship = this.codeValueRepository.getReferenceById(relationshipId);
             clientFamilyMember.setRelationship(relationship);
         }

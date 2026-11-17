@@ -37,12 +37,13 @@ import org.apache.fineract.client.models.PostDelinquencyBucketResponse;
 import org.apache.fineract.client.models.PostDelinquencyRangeResponse;
 import org.apache.fineract.client.models.PutDelinquencyBucketResponse;
 import org.apache.fineract.client.models.WorkingCapitalLoanDelinquencyRangeScheduleData;
+import org.apache.fineract.integrationtests.client.feign.helpers.FeignClientHelper;
+import org.apache.fineract.integrationtests.client.feign.helpers.FeignDelinquencyHelper;
+import org.apache.fineract.integrationtests.client.feign.modules.ClientRequestBuilders;
 import org.apache.fineract.integrationtests.common.BusinessDateHelper;
-import org.apache.fineract.integrationtests.common.ClientHelper;
 import org.apache.fineract.integrationtests.common.FineractFeignClientHelper;
 import org.apache.fineract.integrationtests.common.Utils;
 import org.apache.fineract.integrationtests.common.loans.LoanTestLifecycleExtension;
-import org.apache.fineract.integrationtests.common.products.DelinquencyRangesHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanApplicationTestBuilder;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanDelinquencyRangeScheduleHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanDisbursementTestBuilder;
@@ -55,6 +56,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Slf4j
 @ExtendWith(LoanTestLifecycleExtension.class)
 public class WorkingCapitalLoanDelinquencyRangeScheduleIntegrationTest {
+
+    private final FeignClientHelper clientHelper = new FeignClientHelper(FineractFeignClientHelper.getFineractFeignClient());
+    private final FeignDelinquencyHelper delinquencyHelper = new FeignDelinquencyHelper(FineractFeignClientHelper.getFineractFeignClient());
 
     @Test
     public void testDelinquencyBucketWithMinPaymentValue() {
@@ -123,15 +127,15 @@ public class WorkingCapitalLoanDelinquencyRangeScheduleIntegrationTest {
         assertNotNull(productId);
 
         // Create a client and submit a WC loan
-        final Long clientId = ClientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+        final Long clientId = clientHelper.createClient(ClientRequestBuilders.defaultClient()).getClientId();
         final WorkingCapitalLoanHelper applicationHelper = new WorkingCapitalLoanHelper();
         final Long loanId = applicationHelper.submit(new WorkingCapitalLoanApplicationTestBuilder() //
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(10000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(11000)) //
-                .buildSubmitJson());
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
+                .buildSubmitRequest());
         assertNotNull(loanId);
         log.info("Created WC loan with id: {}", loanId);
 
@@ -170,23 +174,23 @@ public class WorkingCapitalLoanDelinquencyRangeScheduleIntegrationTest {
                     .getResourceId();
 
             // Create client and submit WC loan
-            final Long clientId = ClientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+            final Long clientId = clientHelper.createClient(ClientRequestBuilders.defaultClient()).getClientId();
             final WorkingCapitalLoanHelper applicationHelper = new WorkingCapitalLoanHelper();
             final Long loanId = applicationHelper.submit(new WorkingCapitalLoanApplicationTestBuilder() //
                     .withClientId(clientId) //
                     .withProductId(productId) //
                     .withPrincipal(principal) //
-                    .withPeriodPaymentRate(BigDecimal.ONE) //
-                    .withTotalPayment(BigDecimal.valueOf(10000)) //
-                    .buildSubmitJson());
+                    .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                    .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
+                    .buildSubmitRequest());
 
             // Approve with discount
             final LocalDate approvedDate = LocalDate.of(2026, 1, 1);
             applicationHelper.approveById(loanId,
-                    WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(approvedDate, principal, discount));
+                    WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(approvedDate, principal, discount));
 
             // Disburse
-            applicationHelper.disburseById(loanId, WorkingCapitalLoanDisbursementTestBuilder.buildDisburseJson(approvedDate, principal,
+            applicationHelper.disburseById(loanId, WorkingCapitalLoanDisbursementTestBuilder.buildDisburseRequest(approvedDate, principal,
                     discount, null, null, null, null, null, null, null));
 
             // Run WC COB to generate the range schedule
@@ -212,9 +216,9 @@ public class WorkingCapitalLoanDelinquencyRangeScheduleIntegrationTest {
     }
 
     private List<Long> createDelinquencyRanges() {
-        final PostDelinquencyRangeResponse range1 = DelinquencyRangesHelper.createRange(new DelinquencyRangeRequest()
+        final PostDelinquencyRangeResponse range1 = delinquencyHelper.createRange(new DelinquencyRangeRequest()
                 .classification(Utils.randomStringGenerator("DLQ_R_", 10)).minimumAgeDays(1).maximumAgeDays(30).locale("en"));
-        final PostDelinquencyRangeResponse range2 = DelinquencyRangesHelper.createRange(new DelinquencyRangeRequest()
+        final PostDelinquencyRangeResponse range2 = delinquencyHelper.createRange(new DelinquencyRangeRequest()
                 .classification(Utils.randomStringGenerator("DLQ_R_", 10)).minimumAgeDays(31).maximumAgeDays(60).locale("en"));
         return List.of(range1.getResourceId(), range2.getResourceId());
     }

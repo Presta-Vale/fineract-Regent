@@ -2,32 +2,42 @@ name: Verify API Backward Compatibility
 
 on:
   workflow_call:
+    inputs:
+      upload_artifacts:
+        description: Upload reports and logs even when the job succeeds
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      DEVELOCITY_ACCESS_KEY:
+        required: false
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   api-compatibility-check:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
 
     env:
       TZ: Asia/Kolkata
 
     steps:
       - name: Checkout base branch for baseline
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           path: baseline
 
       - name: Checkout base branch for merged PR
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
@@ -35,28 +45,37 @@ jobs:
 
       - name: Merge PR into current base
         working-directory: current
+        env:
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git fetch "https://github.com/${{ github.event.pull_request.head.repo.full_name }}.git" \
-            "${{ github.event.pull_request.head.ref }}:refs/remotes/pr-head" --no-tags
+          case "$PR_HEAD_SHA" in
+            ""|*[!0-9a-fA-F]*)
+              echo "::error::Invalid pull request head SHA: $PR_HEAD_SHA"
+              exit 1
+              ;;
+          esac
 
-          git merge --no-commit --no-ff refs/remotes/pr-head
+          git fetch "https://github.com/${PR_HEAD_REPO}.git" "$PR_HEAD_SHA" --no-tags
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+          git merge --no-commit --no-ff FETCH_HEAD
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '25'
 
       - name: Generate baseline spec
         working-directory: baseline
-        run: ./gradlew :fineract-provider:resolve --no-daemon
+        run: ./gradlew :fineract-provider:resolve --no-daemon --no-configuration-cache
 
       - name: Generate merged PR spec
         working-directory: current
-        run: ./gradlew :fineract-provider:resolve --no-daemon
+        run: ./gradlew :fineract-provider:resolve --no-daemon --no-configuration-cache
 
       - name: Sanitize specs
         run: |
@@ -90,7 +109,7 @@ jobs:
         working-directory: current
         run: |
           set -o pipefail
-          ./gradlew --no-daemon :fineract-provider:checkBreakingChanges \
+          ./gradlew --no-daemon --no-configuration-cache :fineract-provider:checkBreakingChanges \
             -PapiBaseline="${GITHUB_WORKSPACE}/baseline/fineract-provider/build/resources/main/static/fineract.json" \
             -PapiNew="${GITHUB_WORKSPACE}/current/fineract-provider/build/resources/main/static/fineract.json" \
             -x buildJavaSdk \
@@ -190,32 +209,6 @@ jobs:
               f.write('\n\n> **Note:** This check is informational only and does not block the PR.\n')
           "
 
-      - name: Comment on PR
-        if: always()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          MARKER="<!-- swagger-brake-report -->"
-
-          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -1)
-
-          if [ "${{ steps.breaking-check.outcome }}" == "failure" ] && [ -f "${GITHUB_WORKSPACE}/breaking-changes-report.md" ]; then
-            BODY="${MARKER}
-          $(cat ${GITHUB_WORKSPACE}/breaking-changes-report.md)"
-
-            if [ -n "$COMMENT_ID" ]; then
-              gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
-                -X PATCH -f body="${BODY}"
-            else
-              gh pr comment "${PR_NUMBER}" --repo ${{ github.repository }} --body "${BODY}"
-            fi
-          elif [ -n "$COMMENT_ID" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X DELETE
-          fi
-
       - name: Report no breaking changes
         if: steps.breaking-check.outcome == 'success'
         run: |
@@ -224,15 +217,20 @@ jobs:
           echo "The API contract is backward compatible." >> $GITHUB_STEP_SUMMARY
 
       - name: Archive breaking change report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ failure() || inputs.upload_artifacts }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: api-compatibility-report
           path: current/fineract-provider/build/swagger-brake/
-          retention-days: 30
+          retention-days: 5
+          compression-level: 9
 
       - name: Fail if breaking changes detected
-        if: steps.breaking-check.outcome == 'failure'
+        if: always()
+        env:
+          BREAKING_CHECK_OUTCOME: ${{ steps.breaking-check.outcome }}
         run: |
-          echo "::error::Breaking API changes detected. See the report above for details."
-          exit 1
+          if [ "$BREAKING_CHECK_OUTCOME" == "failure" ]; then
+            echo "::error::Breaking API changes detected. See the report above for details."
+            exit 1
+          fi

@@ -19,7 +19,6 @@
 package org.apache.fineract.portfolio.workingcapitalloan.mapper;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.List;
 import org.apache.fineract.organisation.monetary.domain.Money;
 import org.apache.fineract.portfolio.workingcapitalloan.calc.ProjectedAmortizationScheduleModel;
@@ -31,9 +30,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProjectedAmortizationScheduleMapper {
 
-    private static final int DISPLAY_SCALE = 2;
-    private static final RoundingMode DISPLAY_ROUNDING = RoundingMode.HALF_UP;
-
     public ProjectedAmortizationScheduleData toData(final ProjectedAmortizationScheduleModel model) {
         final List<ProjectedAmortizationSchedulePaymentData> paymentDataList = model.projectedPayments().stream().map(this::toPaymentData)
                 .toList();
@@ -41,8 +37,11 @@ public class ProjectedAmortizationScheduleMapper {
         return ProjectedAmortizationScheduleData.builder() //
                 .discountFeeAmount(roundMoney(model.discountFeeAmount())) //
                 .netDisbursementAmount(roundMoney(model.netDisbursementAmount())) //
-                .totalPaymentValue(roundMoney(model.totalPaymentValue())) //
+                .totalPaymentVolume(roundMoney(model.totalPaymentVolume())) //
                 .periodPaymentRate(model.periodPaymentRate()) //
+                .paymentAmountCalculationStrategy(model.strategy().getValueAsStringEnumOptionData()) //
+                .annualEir(model.annualEir()) //
+                .paymentAmount(model.paymentAmount()) //
                 .npvDayCount(model.npvDayCount()) //
                 .expectedDisbursementDate(model.expectedDisbursementDate()) //
                 .expectedPaymentAmount(roundMoney(model.expectedPaymentAmount())) //
@@ -57,18 +56,17 @@ public class ProjectedAmortizationScheduleMapper {
                 .paymentNo(payment.paymentNo()) //
                 .paymentDate(payment.date()) //
                 .expectedPaymentAmount(roundMoney(payment.expectedPaymentAmount())) //
-                .discountFactor(payment.discountFactor()) //
-                .npvValue(roundMoney(payment.npvValue())) //
-                .balance(roundMoney(payment.balance())) //
+                .expectedBalance(roundMoney(payment.expectedBalance())) //
+                .actualBalance(roundMoney(payment.actualBalance())) //
                 .expectedAmortizationAmount(roundMoney(payment.expectedAmortizationAmount())) //
                 .actualPaymentAmount(roundMoney(payment.actualPaymentAmount())) //
                 .actualAmortizationAmount(roundMoney(payment.actualAmortizationAmount())) //
-                .incomeModification(roundMoney(payment.incomeModification())) //
-                .deferredBalance(roundMoney(payment.deferredBalance())) //
+                .expectedDiscountFeeBalance(roundMoney(payment.expectedDiscountFeeBalance())) //
+                .actualDiscountFeeBalance(roundMoney(payment.actualDiscountFeeBalance())) //
                 .build();
     }
 
     private static BigDecimal roundMoney(final Money value) {
-        return value != null ? value.getAmount().setScale(DISPLAY_SCALE, DISPLAY_ROUNDING) : null;
+        return value != null ? value.getAmount() : null;
     }
 }

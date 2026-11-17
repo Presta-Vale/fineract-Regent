@@ -23,9 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.restassured.builder.RequestSpecBuilder;
-import io.restassured.http.ContentType;
-import io.restassured.specification.RequestSpecification;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -33,29 +30,22 @@ import java.util.Map;
 import java.util.UUID;
 import org.apache.fineract.client.feign.util.CallFailedRuntimeException;
 import org.apache.fineract.client.models.GetWorkingCapitalLoansLoanIdResponse;
-import org.apache.fineract.integrationtests.common.ClientHelper;
+import org.apache.fineract.client.models.PostWorkingCapitalLoansLoanIdRequest;
+import org.apache.fineract.integrationtests.client.feign.helpers.FeignClientHelper;
+import org.apache.fineract.integrationtests.client.feign.modules.ClientRequestBuilders;
+import org.apache.fineract.integrationtests.common.FineractFeignClientHelper;
 import org.apache.fineract.integrationtests.common.Utils;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanApplicationTestBuilder;
 import org.apache.fineract.integrationtests.common.workingcapitalloan.WorkingCapitalLoanHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanproduct.WorkingCapitalLoanProductHelper;
 import org.apache.fineract.integrationtests.common.workingcapitalloanproduct.WorkingCapitalLoanProductTestBuilder;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 public class WorkingCapitalLoanApprovalRejectionTest {
 
-    private static RequestSpecification requestSpec;
-
+    private final FeignClientHelper clientHelper = new FeignClientHelper(FineractFeignClientHelper.getFineractFeignClient());
     private final WorkingCapitalLoanHelper applicationHelper = new WorkingCapitalLoanHelper();
     private final WorkingCapitalLoanProductHelper productHelper = new WorkingCapitalLoanProductHelper();
-
-    @BeforeAll
-    static void init() {
-        Utils.initializeRESTAssured();
-        requestSpec = new RequestSpecBuilder().setContentType(ContentType.JSON).build();
-        requestSpec.header("Authorization", "Basic " + Utils.loginIntoServerAndGetBase64EncodedAuthenticationKey());
-        requestSpec.header("Fineract-Platform-TenantId", "default");
-    }
 
     // ===== AC: User should be able to approve the created loan account (via API) =====
 
@@ -66,12 +56,12 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         final LocalDate approvedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(approvedOnDate));
+        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(approvedOnDate));
 
         final GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
         assertEquals("loanStatusType.approved", data.getStatus().getCode());
-        assertEquals(approvedOnDate, data.getApprovedOnDate());
+        assertEquals(approvedOnDate, data.getTimeline().getApprovedOnDate());
         // approvedPrincipal should default to proposedPrincipal
         assertNotNull(data.getApprovedPrincipal());
     }
@@ -88,25 +78,25 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withDiscount(BigDecimal.valueOf(100)) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         final LocalDate approvedOnDate = getSubmittedOnDate(loanId);
         final BigDecimal approvedAmount = BigDecimal.valueOf(3000);
         final BigDecimal discountAmount = BigDecimal.valueOf(50); // reduced from 100 to 50
 
         applicationHelper.approveById(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(approvedOnDate, approvedAmount, discountAmount));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(approvedOnDate, approvedAmount, discountAmount));
 
         final GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
         assertEquals("loanStatusType.approved", data.getStatus().getCode());
         assertEqualBigDecimal(approvedAmount, data.getApprovedPrincipal());
-        assertEqualBigDecimal(BigDecimal.valueOf(100), data.getDiscountProposed());
-        assertEqualBigDecimal(discountAmount, data.getDiscountApproved());
-        assertNull(data.getDiscount());
+        assertEqualBigDecimal(BigDecimal.valueOf(100), data.getProposedDiscountFee());
+        assertEqualBigDecimal(discountAmount, data.getApprovedDiscountFee());
+        assertNull(data.getDiscountFee());
     }
 
     @Test
@@ -116,12 +106,12 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         final LocalDate rejectedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.rejectById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildRejectJson(rejectedOnDate));
+        applicationHelper.rejectById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildRejectRequest(rejectedOnDate));
 
         final GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
         assertEquals("loanStatusType.rejected", data.getStatus().getCode());
-        assertEquals(rejectedOnDate, data.getRejectedOnDate());
+        assertEquals(rejectedOnDate, data.getTimeline().getRejectedOnDate());
     }
 
     // ===== AC: User should be able to undo the approval; moves back to created state =====
@@ -132,9 +122,9 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long clientId = createClient();
         final Long loanId = submitLoan(clientId, productId);
 
-        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId)));
+        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId)));
 
-        applicationHelper.undoApprovalById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveJson());
+        applicationHelper.undoApprovalById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveRequest());
 
         final GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
@@ -154,23 +144,23 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withDiscount(BigDecimal.valueOf(100)) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         // Approve with reduced principal and discount
-        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId),
+        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId),
                 BigDecimal.valueOf(3000), BigDecimal.valueOf(50)));
 
         final GetWorkingCapitalLoansLoanIdResponse approvedData = retrieveLoan(loanId);
         assertEqualBigDecimal(BigDecimal.valueOf(3000), approvedData.getApprovedPrincipal());
-        assertEqualBigDecimal(BigDecimal.valueOf(100), approvedData.getDiscountProposed());
-        assertEqualBigDecimal(BigDecimal.valueOf(50), approvedData.getDiscountApproved());
-        assertNull(approvedData.getDiscount());
+        assertEqualBigDecimal(BigDecimal.valueOf(100), approvedData.getProposedDiscountFee());
+        assertEqualBigDecimal(BigDecimal.valueOf(50), approvedData.getApprovedDiscountFee());
+        assertNull(approvedData.getDiscountFee());
 
         // Undo approval
-        applicationHelper.undoApprovalById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveJson());
+        applicationHelper.undoApprovalById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveRequest());
 
         final GetWorkingCapitalLoansLoanIdResponse undoData = retrieveLoan(loanId);
         assert undoData.getStatus() != null;
@@ -191,10 +181,10 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         final LocalDate submittedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(submittedOnDate));
+        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(submittedOnDate));
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(submittedOnDate));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(submittedOnDate));
         assertNotNull(ex);
     }
 
@@ -205,10 +195,10 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         final LocalDate submittedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(submittedOnDate));
+        applicationHelper.approveById(loanId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(submittedOnDate));
 
         CallFailedRuntimeException ex = applicationHelper.runRejectExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildRejectJson(submittedOnDate));
+                WorkingCapitalLoanApplicationTestBuilder.buildRejectRequest(submittedOnDate));
         assertNotNull(ex);
     }
 
@@ -219,7 +209,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         CallFailedRuntimeException ex = applicationHelper.runUndoApprovalExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveJson());
+                WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveRequest());
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -235,7 +225,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(null));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(null));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -249,7 +239,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId).plusDays(10)));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId).plusDays(10)));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -266,13 +256,13 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withSubmittedOnDate(submittedOnDate) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(submittedOnDate.minusDays(1)));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(submittedOnDate.minusDays(1)));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -286,7 +276,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         CallFailedRuntimeException ex = applicationHelper.runRejectExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildRejectJson(null));
+                WorkingCapitalLoanApplicationTestBuilder.buildRejectRequest(null));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -300,7 +290,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId), BigDecimal.valueOf(-100), null));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId), BigDecimal.valueOf(-100), null));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -314,7 +304,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId); // proposed principal = 5000
 
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId), BigDecimal.valueOf(6000), null));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId), BigDecimal.valueOf(6000), null));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -327,9 +317,9 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long clientId = createClient();
         final Long loanId = submitLoan(clientId, productId);
 
-        // Build approve JSON without expectedDisbursementDate
-        final String json = "{\"locale\":\"en\",\"dateFormat\":\"yyyy-MM-dd\",\"approvedOnDate\":\"" + getSubmittedOnDate(loanId) + "\"}";
-        CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId, json);
+        final var request = new PostWorkingCapitalLoansLoanIdRequest().locale("en").dateFormat("yyyy-MM-dd")
+                .approvedOnDate(getSubmittedOnDate(loanId).toString());
+        CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId, request);
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -346,14 +336,14 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withDiscount(BigDecimal.valueOf(100)) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         // Approve with discount = 200 (exceeds creation-time 100) → should fail
         CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId,
-                WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(getSubmittedOnDate(loanId), null, BigDecimal.valueOf(200)));
+                WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(getSubmittedOnDate(loanId), null, BigDecimal.valueOf(200)));
         assertNotNull(ex);
 
         applicationHelper.deleteById(loanId);
@@ -368,7 +358,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
         final Long loanId = submitLoan(clientId, productId);
 
         final CallFailedRuntimeException ex = applicationHelper.runApproveExpectingFailure(loanId, WorkingCapitalLoanApplicationTestBuilder
-                .buildApproveJson(getSubmittedOnDate(loanId), BigDecimal.valueOf(5000), BigDecimal.valueOf(10)));
+                .buildApproveRequest(getSubmittedOnDate(loanId), BigDecimal.valueOf(5000), BigDecimal.valueOf(10)));
         assertNotNull(ex);
         assertEquals(400, ex.getStatus());
         assertNotNull(ex.getDeveloperMessage());
@@ -390,19 +380,19 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withExternalId(externalId) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         final LocalDate approvedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.approveByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildApproveJson(approvedOnDate));
+        applicationHelper.approveByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildApproveRequest(approvedOnDate));
 
         GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
         assertEquals("loanStatusType.approved", data.getStatus().getCode());
 
-        applicationHelper.undoApprovalByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveJson());
+        applicationHelper.undoApprovalByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildUndoApproveRequest());
 
         data = retrieveLoan(loanId);
         assert data.getStatus() != null;
@@ -419,13 +409,13 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
                 .withExternalId(externalId) //
-                .buildSubmitJson());
+                .buildSubmitRequest());
 
         final LocalDate rejectedOnDate = getSubmittedOnDate(loanId);
-        applicationHelper.rejectByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildRejectJson(rejectedOnDate));
+        applicationHelper.rejectByExternalId(externalId, WorkingCapitalLoanApplicationTestBuilder.buildRejectRequest(rejectedOnDate));
 
         final GetWorkingCapitalLoansLoanIdResponse data = retrieveLoan(loanId);
         assert data.getStatus() != null;
@@ -439,9 +429,9 @@ public class WorkingCapitalLoanApprovalRejectionTest {
                 .withClientId(clientId) //
                 .withProductId(productId) //
                 .withPrincipal(BigDecimal.valueOf(5000)) //
-                .withPeriodPaymentRate(BigDecimal.ONE) //
-                .withTotalPayment(BigDecimal.valueOf(5500)) //
-                .buildSubmitJson());
+                .withPeriodPaymentRate(WorkingCapitalLoanProductTestBuilder.DEFAULT_PERIOD_PAYMENT_RATE_PERCENT) //
+                .withTotalPaymentVolume(BigDecimal.valueOf(100000)) //
+                .buildSubmitRequest());
     }
 
     private GetWorkingCapitalLoansLoanIdResponse retrieveLoan(final Long loanId) {
@@ -455,7 +445,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
      * test JVM and the server (which uses the tenant timezone).
      */
     private LocalDate getSubmittedOnDate(final Long loanId) {
-        return retrieveLoan(loanId).getSubmittedOnDate();
+        return retrieveLoan(loanId).getTimeline().getSubmittedOnDate();
     }
 
     private Long createProduct() {
@@ -478,7 +468,7 @@ public class WorkingCapitalLoanApprovalRejectionTest {
     }
 
     private Long createClient() {
-        return ClientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+        return clientHelper.createClient(ClientRequestBuilders.defaultClient()).getClientId();
     }
 
     private static void assertEqualBigDecimal(final BigDecimal expected, final BigDecimal actual) {

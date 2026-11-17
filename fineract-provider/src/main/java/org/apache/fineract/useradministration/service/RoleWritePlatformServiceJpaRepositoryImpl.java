@@ -96,7 +96,7 @@ public class RoleWritePlatformServiceJpaRepositoryImpl implements RoleWritePlatf
                     "name", name);
         }
 
-        log.error("Error occured.", dve);
+        log.error("Error occurred.", dve);
         throw ErrorHandler.getMappable(dve, "error.msg.role.unknown.data.integrity.issue", "Unknown data integrity issue with resource.");
     }
 
@@ -175,12 +175,19 @@ public class RoleWritePlatformServiceJpaRepositoryImpl implements RoleWritePlatf
 
     private Permission findPermissionByCode(final Collection<Permission> allPermissions, final String permissionCode) {
 
+        Permission caseInsensitiveMatch = null;
         if (allPermissions != null) {
             for (final Permission permission : allPermissions) {
-                if (permission.hasCode(permissionCode)) {
+                if (permission.getCode().equals(permissionCode)) {
                     return permission;
                 }
+                if (caseInsensitiveMatch == null && permission.hasCode(permissionCode)) {
+                    caseInsensitiveMatch = permission;
+                }
             }
+        }
+        if (caseInsensitiveMatch != null) {
+            return caseInsensitiveMatch;
         }
         throw new PermissionNotFoundException(permissionCode);
     }

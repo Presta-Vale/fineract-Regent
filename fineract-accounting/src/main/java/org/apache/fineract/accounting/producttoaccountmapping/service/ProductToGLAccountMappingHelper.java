@@ -48,10 +48,9 @@ import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.serialization.FromJsonHelper;
 import org.apache.fineract.portfolio.PortfolioProductType;
-import org.apache.fineract.portfolio.charge.domain.Charge;
-import org.apache.fineract.portfolio.charge.domain.ChargeRepositoryWrapper;
 import org.apache.fineract.portfolio.paymenttype.domain.PaymentType;
-import org.apache.fineract.portfolio.paymenttype.domain.PaymentTypeRepositoryWrapper;
+import org.apache.fineract.portfolio.paymenttype.domain.PaymentTypeRepository;
+import org.apache.fineract.portfolio.paymenttype.exception.PaymentTypeNotFoundException;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -64,9 +63,9 @@ public class ProductToGLAccountMappingHelper {
     protected final GLAccountRepository accountRepository;
     protected final ProductToGLAccountMappingRepository accountMappingRepository;
     protected final FromJsonHelper fromApiJsonHelper;
-    private final ChargeRepositoryWrapper chargeRepositoryWrapper;
+    private final AccountingChargeReadService accountingChargeReadService;
     protected final GLAccountRepositoryWrapper accountRepositoryWrapper;
-    private final PaymentTypeRepositoryWrapper paymentTypeRepositoryWrapper;
+    private final PaymentTypeRepository paymentTypeRepository;
     private final CodeValueRepository codeValueRepository;
 
     public void saveProductToAccountMapping(final JsonElement element, final String paramName, final Long productId,
@@ -343,7 +342,7 @@ public class ProductToGLAccountMappingHelper {
                **/
             else {
                 for (final ProductToGLAccountMapping chargeToIncomeAccountMapping : existingChargeToIncomeAccountMappings) {
-                    final Long currentCharge = chargeToIncomeAccountMapping.getCharge().getId();
+                    final Long currentCharge = chargeToIncomeAccountMapping.getChargeId();
                     existingCharges.add(currentCharge);
                     // update existing mappings (if required)
                     if (inputChargeToIncomeAccountMap.containsKey(currentCharge)) {
@@ -597,7 +596,8 @@ public class ProductToGLAccountMappingHelper {
      */
     private void savePaymentChannelToFundSourceMapping(final Long productId, final Long paymentTypeId,
             final Long paymentTypeSpecificFundAccountId, final PortfolioProductType portfolioProductType) {
-        final PaymentType paymentType = this.paymentTypeRepositoryWrapper.findOneWithNotFoundDetection(paymentTypeId);
+        final PaymentType paymentType = this.paymentTypeRepository.findById(paymentTypeId)
+                .orElseThrow(() -> new PaymentTypeNotFoundException(paymentTypeId));
         final GLAccount glAccount = getAccountById(LoanProductAccountingParams.FUND_SOURCE.getValue(), paymentTypeSpecificFundAccountId);
         final ProductToGLAccountMapping accountMapping = new ProductToGLAccountMapping().setGlAccount(glAccount).setProductId(productId)
                 .setProductType(portfolioProductType.getValue()).setFinancialAccountType(CashAccountsForLoan.FUND_SOURCE.getValue())
@@ -611,7 +611,7 @@ public class ProductToGLAccountMappingHelper {
      */
     private void saveChargeToFundSourceMapping(final Long productId, final Long chargeId, final Long incomeAccountId,
             final PortfolioProductType portfolioProductType, final boolean isPenalty) {
-        final Charge charge = this.chargeRepositoryWrapper.findOneWithNotFoundDetection(chargeId);
+        this.accountingChargeReadService.validateChargeForMapping(chargeId);
 
         // TODO Vishwas: Need to validate if given charge is fee or Penalty
         // based on input condition
@@ -633,7 +633,7 @@ public class ProductToGLAccountMappingHelper {
         }
         final ProductToGLAccountMapping accountMapping = new ProductToGLAccountMapping().setGlAccount(glAccount).setProductId(productId)
                 .setProductType(portfolioProductType.getValue()).setFinancialAccountType(placeHolderAccountType.getValue())
-                .setCharge(charge);
+                .setChargeId(chargeId);
         this.accountMappingRepository.saveAndFlush(accountMapping);
     }
 

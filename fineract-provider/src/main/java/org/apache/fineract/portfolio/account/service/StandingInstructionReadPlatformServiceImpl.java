@@ -50,6 +50,7 @@ import org.apache.fineract.portfolio.account.data.PortfolioAccountData;
 import org.apache.fineract.portfolio.account.data.StandingInstructionDTO;
 import org.apache.fineract.portfolio.account.data.StandingInstructionData;
 import org.apache.fineract.portfolio.account.data.StandingInstructionDuesData;
+import org.apache.fineract.portfolio.account.data.StandingInstructionPartition;
 import org.apache.fineract.portfolio.account.domain.AccountTransferRecurrenceType;
 import org.apache.fineract.portfolio.account.domain.AccountTransferType;
 import org.apache.fineract.portfolio.account.domain.StandingInstructionPriority;
@@ -261,7 +262,8 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
         sqlBuilder.append("select " + sqlGenerator.calcFoundRows() + " ");
         sqlBuilder.append(this.standingInstructionMapper.schema());
         if (standingInstructionDTO.transferType() != null || standingInstructionDTO.clientId() != null
-                || standingInstructionDTO.clientName() != null) {
+                || standingInstructionDTO.clientName() != null
+                || (standingInstructionDTO.fromAccountType() != null && standingInstructionDTO.fromAccount() != null)) {
             sqlBuilder.append(" where ");
         }
         boolean addAndCaluse = false;
@@ -299,7 +301,8 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
                 sqlBuilder.append(" fromsavacc.id=? ");
                 paramObj.add(standingInstructionDTO.fromAccount());
             } else if (PortfolioAccountType.LOAN.equals(accountType)) {
-                sqlBuilder.append(" fromloanacc.id=? ");
+                sqlBuilder.append(" (toloanacc.id=? or fromloanacc.id=?) ");
+                paramObj.add(standingInstructionDTO.fromAccount());
                 paramObj.add(standingInstructionDTO.fromAccount());
             }
             addAndCaluse = true;
@@ -328,18 +331,57 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
         return this.paginationHelper.fetchPage(this.jdbcTemplate, sqlBuilder.toString(), finalObjectArray, this.standingInstructionMapper);
     }
 
+    /**
+     * The source account of an instruction is either a savings or a loan account, so the two id spaces are collapsed
+     * into one partition key. The spaces overlap, so two unrelated accounts can share a key and land in the same
+     * partition; that only costs a little parallelism. What matters for correctness is the other direction, and it
+     * holds: one account can never be split across two partitions.
+     */
+    private static final String SOURCE_ACCOUNT_KEY = "COALESCE(atd.from_savings_account_id, atd.from_loan_account_id)";
+
+    private String dueInstructionPredicate() {
+        final String businessDate = sqlGenerator.currentBusinessDate();
+        return " atsi.status = ? and " + businessDate + " >= atsi.valid_from and (atsi.valid_till IS NULL or " + businessDate
+                + " < atsi.valid_till) and (atsi.last_run_date <> " + businessDate + " or atsi.last_run_date IS NULL) ";
+    }
+
     @Override
-    public Collection<StandingInstructionData> retrieveAll(final Integer status) {
-        final StringBuilder sqlBuilder = new StringBuilder(200);
-        String businessDate = sqlGenerator.currentBusinessDate();
-        sqlBuilder.append("select ");
-        sqlBuilder.append(this.standingInstructionMapper.schema());
-        sqlBuilder
-                .append(" where atsi.status=? and " + businessDate + " >= atsi.valid_from and (atsi.valid_till IS NULL or " + businessDate
-                        + " < atsi.valid_till) ")
-                .append(" and  (atsi.last_run_date <> " + businessDate + " or atsi.last_run_date IS NULL)")
-                .append(" ORDER BY atsi.priority DESC");
-        return this.jdbcTemplate.query(sqlBuilder.toString(), this.standingInstructionMapper, status);
+    public List<StandingInstructionPartition> retrieveDuePartitions(final Integer status, final int partitionSize) {
+        // Buckets the DISTINCT source accounts (not the instructions) into runs of partitionSize by row number, then
+        // reports the account-key range of each bucket. Window functions are available on both supported engines.
+        final String sql = "select min(accountKey) as minKey, max(accountKey) as maxKey, page, sum(instructionCount) as instructionCount "
+                + "from (select floor((row_number() over(order by accountKey) - 1) / ?) as page, accountKey, instructionCount "
+                + "from (select " + SOURCE_ACCOUNT_KEY + " as accountKey, count(*) as instructionCount "
+                + "from m_account_transfer_standing_instructions atsi "
+                + "join m_account_transfer_details atd on atd.id = atsi.account_transfer_details_id " + "where " + dueInstructionPredicate()
+                + "group by " + SOURCE_ACCOUNT_KEY + ") accounts) buckets group by page order by page";
+        return this.jdbcTemplate.query(sql, (rs, rowNum) -> new StandingInstructionPartition(rs.getLong("minKey"), rs.getLong("maxKey"),
+                rs.getLong("page"), rs.getLong("instructionCount")), partitionSize, status);
+    }
+
+    @Override
+    public List<StandingInstructionData> retrieveDuePage(final Integer status, final Long minAccountKey, final Long maxAccountKey,
+            final Integer afterPriority, final Long afterId, final int limit) {
+        final List<Object> params = new ArrayList<>();
+        final StringBuilder sqlBuilder = new StringBuilder(600);
+        sqlBuilder.append("select ").append(this.standingInstructionMapper.schema()).append(" where ").append(dueInstructionPredicate());
+        params.add(status);
+        if (minAccountKey != null && maxAccountKey != null) {
+            sqlBuilder.append(" and ").append(SOURCE_ACCOUNT_KEY).append(" between ? and ? ");
+            params.add(minAccountKey);
+            params.add(maxAccountKey);
+        }
+        if (afterPriority != null && afterId != null) {
+            // Keyset over the (priority, id) sort key. Spelled out rather than as a row-value comparison, which the two
+            // supported engines do not optimise alike.
+            sqlBuilder.append(" and (atsi.priority > ? or (atsi.priority = ? and atsi.id > ?)) ");
+            params.add(afterPriority);
+            params.add(afterPriority);
+            params.add(afterId);
+        }
+        // priority enum is URGENT(1) .. LOW(4); ASC runs URGENT first (DESC previously ran LOW first).
+        sqlBuilder.append(" order by atsi.priority asc, atsi.id asc ").append(sqlGenerator.limit(limit));
+        return this.jdbcTemplate.query(sqlBuilder.toString(), this.standingInstructionMapper, params.toArray());
     }
 
     @Override
@@ -358,7 +400,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
     public StandingInstructionDuesData retriveLoanDuesData(final Long loanId) {
         final StandingInstructionLoanDuesMapper rm = new StandingInstructionLoanDuesMapper();
         final String sql = "select " + rm.schema() + " where ml.id= ? and ls.duedate <= " + sqlGenerator.currentBusinessDate()
-                + " and ls.completed_derived <> 1";
+                + " and ls.completed_derived IS FALSE";
         return this.jdbcTemplate.queryForObject(sql, rm, new Object[] { loanId }); // NOSONAR
     }
 
@@ -375,6 +417,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
             sqlBuilder.append("atsi.recurrence_type as recurrenceType, atsi.recurrence_frequency as recurrenceFrequency,");
             sqlBuilder.append("atsi.recurrence_interval as recurrenceInterval, atsi.recurrence_on_day as recurrenceOnDay,");
             sqlBuilder.append("atsi.recurrence_on_month as recurrenceOnMonth,");
+            sqlBuilder.append("atsi.allow_partial_transfer as allowPartialTransfer,");
             sqlBuilder.append("atd.id as accountDetailId,atd.transfer_type as transferType,");
             sqlBuilder.append("fromoff.id as fromOfficeId, fromoff.name as fromOfficeName,");
             sqlBuilder.append("tooff.id as toOfficeId, tooff.name as toOfficeName,");
@@ -406,7 +449,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
             this.schemaSql = sqlBuilder.toString();
         }
 
-        public String schema() {
+        private String schema() {
             return this.schemaSql;
         }
 
@@ -511,9 +554,12 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
                 toAccountType = accountType(PortfolioAccountType.LOAN);
             }
 
+            final boolean allowPartialTransfer = rs.getBoolean("allowPartialTransfer");
+
             return StandingInstructionData.instance(id, accountDetailId, name, fromOffice, toOffice, fromClient, toClient, fromAccountType,
                     fromAccount, toAccountType, toAccount, transferTypeEnum, priorityEnum, instructionTypeEnum, statusEnum, transferAmount,
-                    validFrom, validTill, recurrenceTypeEnum, recurrenceFrequencyEnum, recurrenceInterval, recurrenceOnMonthDay);
+                    validFrom, validTill, recurrenceTypeEnum, recurrenceFrequencyEnum, recurrenceInterval, recurrenceOnMonthDay,
+                    allowPartialTransfer);
         }
     }
 
@@ -545,7 +591,7 @@ public class StandingInstructionReadPlatformServiceImpl implements StandingInstr
             this.schemaSql = sqlBuilder.toString();
         }
 
-        public String schema() {
+        private String schema() {
             return this.schemaSql;
         }
 

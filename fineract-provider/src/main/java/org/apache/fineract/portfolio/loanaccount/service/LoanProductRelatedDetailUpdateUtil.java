@@ -21,10 +21,12 @@ package org.apache.fineract.portfolio.loanaccount.service;
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.apache.fineract.infrastructure.core.api.JsonCommand;
 import org.apache.fineract.organisation.monetary.domain.MonetaryCurrency;
 import org.apache.fineract.portfolio.common.domain.DaysInYearCustomStrategyType;
+import org.apache.fineract.portfolio.common.domain.MonthEndDueDateStrategy;
 import org.apache.fineract.portfolio.common.domain.PeriodFrequencyType;
 import org.apache.fineract.portfolio.loanaccount.domain.LoanBuyDownFeeCalculationType;
 import org.apache.fineract.portfolio.loanaccount.domain.LoanBuyDownFeeIncomeType;
@@ -122,6 +124,30 @@ public class LoanProductRelatedDetailUpdateUtil {
             actualChanges.put(repaymentFrequencyTypeParamName, newValue);
             actualChanges.put("locale", localeAsInput);
             loanRepaymentScheduleDetail.setRepaymentPeriodFrequencyType(PeriodFrequencyType.fromInt(newValue));
+        }
+
+        if (command.isChangeInIntegerParameterNamed(LoanProductConstants.FIRST_REPAYMENT_DAY_OF_MONTH,
+                loanRepaymentScheduleDetail.getFirstRepaymentDayOfMonth())) {
+            final Integer newValue = command.integerValueOfParameterNamed(LoanProductConstants.FIRST_REPAYMENT_DAY_OF_MONTH);
+            actualChanges.put(LoanProductConstants.FIRST_REPAYMENT_DAY_OF_MONTH, newValue);
+            actualChanges.put("locale", localeAsInput);
+            loanRepaymentScheduleDetail.setFirstRepaymentDayOfMonth(newValue);
+        }
+        if (command.isChangeInIntegerParameterNamed(LoanProductConstants.SECOND_REPAYMENT_DAY_OF_MONTH,
+                loanRepaymentScheduleDetail.getSecondRepaymentDayOfMonth())) {
+            final Integer newValue = command.integerValueOfParameterNamed(LoanProductConstants.SECOND_REPAYMENT_DAY_OF_MONTH);
+            actualChanges.put(LoanProductConstants.SECOND_REPAYMENT_DAY_OF_MONTH, newValue);
+            actualChanges.put("locale", localeAsInput);
+            loanRepaymentScheduleDetail.setSecondRepaymentDayOfMonth(newValue);
+        }
+        // The due days only mean something to a semi-monthly product, so switching away from it drops them.
+        if (!loanRepaymentScheduleDetail.getRepaymentPeriodFrequencyType().isSemiMonthly()
+                && (loanRepaymentScheduleDetail.getFirstRepaymentDayOfMonth() != null
+                        || loanRepaymentScheduleDetail.getSecondRepaymentDayOfMonth() != null)) {
+            actualChanges.put(LoanProductConstants.FIRST_REPAYMENT_DAY_OF_MONTH, null);
+            actualChanges.put(LoanProductConstants.SECOND_REPAYMENT_DAY_OF_MONTH, null);
+            loanRepaymentScheduleDetail.setFirstRepaymentDayOfMonth(null);
+            loanRepaymentScheduleDetail.setSecondRepaymentDayOfMonth(null);
         }
         if (loanRepaymentScheduleDetail.getRepaymentPeriodFrequencyType() == PeriodFrequencyType.MONTHS) {
             final String repaymentFrequencyNthDayTypeParamName = "repaymentFrequencyNthDayType";
@@ -277,6 +303,16 @@ public class LoanProductRelatedDetailUpdateUtil {
                     .valueOf(command.stringValueOfParameterNamed(LoanProductConstants.DAYS_IN_YEAR_CUSTOM_STRATEGY_TYPE_PARAMETER_NAME));
             actualChanges.put(LoanProductConstants.DAYS_IN_YEAR_CUSTOM_STRATEGY_TYPE_PARAMETER_NAME, newValue.name());
             loanRepaymentScheduleDetail.setDaysInYearCustomStrategy(newValue);
+        }
+
+        if (command.parameterExists(LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME)) {
+            final MonthEndDueDateStrategy newValue = command.enumValueOfParameterNamed(
+                    LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME, MonthEndDueDateStrategy.class);
+            if (!Objects.equals(newValue, loanRepaymentScheduleDetail.getMonthEndDueDateStrategy())) {
+                actualChanges.put(LoanProductConstants.MONTH_END_DUE_DATE_STRATEGY_PARAMETER_NAME,
+                        newValue == null ? null : newValue.name());
+                loanRepaymentScheduleDetail.setMonthEndDueDateStrategy(newValue);
+            }
         }
 
         if (command.isChangeInBooleanParameterNamed(LoanProductConstants.IS_INTEREST_RECALCULATION_ENABLED_PARAMETER_NAME,
